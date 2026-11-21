@@ -3,7 +3,7 @@
   python main.py                                        # MLP gelé (valeur HPO)
   python main.py --model ridge --name ridge
   python main.py --model constant --name constant
-  python main.py --model mlp --features handcrafted --name mlp-handcrafted
+  python main.py --input input/windows-48000-bands200-avg4-descriptors-w100-s20.parquet --features handcrafted
 
 Entrée  input/windows-48000-bands200-avg4-w100-s20.parquet par défaut
 Sortie  output/<nom>/ : model.joblib, metrics.json (validation + holdout, MAE
