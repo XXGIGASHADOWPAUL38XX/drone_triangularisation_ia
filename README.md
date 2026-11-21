@@ -11,7 +11,7 @@ sans casser la méthodologie.
 
 ```
 00_download_dataset/   corpus (local ou HF privé)      -> output/data/ (samples/ ou data/)
-01_ppc_features/       fenêtres + 57 features + splits  -> output/windows-<rate>-bands200-avg4-descriptors.parquet
+01_ppc_features/       fenêtres + 50 features + splits  -> output/windows-48000-bands200-avg4-w100-s20.parquet
 02_ppc_classification/ détecteur (MLP, baselines)        -> output/<run>/ (modèle + métriques)
 03_ppc_distance/      distance (MLP gelé, baselines)  -> output/<run>/ (modèle + métriques)
 04_compare/            tableau de tous les runs         -> output/comparatif.csv
@@ -27,7 +27,7 @@ le contenu de `input/` et `output/` n'est pas versionné (ce sont des données).
 WAV maîtres (mono PCM16 48 kHz)
    │  00  (corpus local ou HF privé)
    ▼ 01_ppc_features/input/data ──> 01 ──> parquet de features + splits.json
-   │        (FIR anti-repliement, contrôle qualité, fenêtres 250 ms / pas 125 ms)
+   │        (48 kHz natif, contrôle qualité, fenêtres 100 ms / pas 20 ms)
    ▼ copié automatiquement vers 02/input et 03/input
 02 / 03 : entraînement unique par groupes ──> validation ──> holdout
    ▼
@@ -41,8 +41,8 @@ output/<run>/ : model.joblib, metrics.json, config.json, curves.json, courbes
 
 | Tâche | Modèle | Entrée actuelle | Dev historique | Holdout historique |
 |---|---|---|---|---|
-| Détection | **MLP**, 16 unités cachées | 50 niveaux de bandes, RMS et six descripteurs | 97,5 % balanced acc. (CNN) | 96,2 % (CNN) |
-| Distance | **MLP**, 16 unités cachées, sortie [1, 5] m | Les mêmes 57 features | MAE 0,43 m | 0,46 m |
+| Détection | **MLP**, 16 unités cachées | 50 niveaux de bandes | 97,5 % balanced acc. (CNN) | 96,2 % (CNN) |
+| Distance | **MLP**, 16 unités cachées, sortie [1, 5] m | Les mêmes 50 niveaux de bandes | MAE 0,43 m | 0,46 m |
 
 Les scores historiques correspondent aux anciennes entrées. Régénérer les parquets à l'étape 01 et réentraîner les modèles pour évaluer les entrées FFT.
 
@@ -67,7 +67,7 @@ python -m pytest -q
 python 00_download_dataset/main.py --local /home/noe/Projects/EDTH_data-collector/data
 # ou : python 00_download_dataset/main.py --repo ImAPancake/EDTH_drone_distance_raw --revision <sha>
 
-python 01_ppc_features/main.py --rate 24000 --window-ms 250 --stride-ms 125
+python 01_ppc_features/main.py
 
 python 02_ppc_classification/main.py
 python 02_ppc_classification/main.py --model logistic --name logit
@@ -93,6 +93,7 @@ Les features dépendent du taux, **pas les splits** : `splits.json` est écrit
 une fois puis réutilisé (l'étape 01 le recopie dans son propre `input/`),
 donc tous les taux comparent les mêmes partitions d'entraînement, de validation et de test.
 Les anciens splits gardent leur holdout et réutilisent le pli 0 comme validation.
+Le pipeline et Optuna utilisent par défaut 48 kHz, une fenêtre de 100 ms et un pas de 20 ms.
 Les options `--window-ms` et `--stride-ms` règlent la durée et le pas en millisecondes.
 Le pas accepte des valeurs fractionnaires, par exemple `--stride-ms 62.5`.
 La fenêtre doit contenir au moins les 2 048 échantillons d'une trame FFT.
@@ -100,10 +101,10 @@ Pour conserver plusieurs caches à un même taux, donner un suffixe avec
 `--cache-tag`, par exemple `--cache-tag w100-s50`.
 
 ```sh
-python 01_ppc_features/main.py --rate 16000        # idem --rate 48000
+python 01_ppc_features/main.py --rate 16000 --window-ms 250 --stride-ms 125
 # puis, pour tester ce taux (depuis la racine) :
-python 02_ppc_classification/main.py --input 02_ppc_classification/input/windows-16000-bands200-avg4-descriptors.parquet --name mlp-16k
-python 03_ppc_distance/main.py      --input 03_ppc_distance/input/windows-16000-bands200-avg4-descriptors.parquet --name mlp-16k
+python 02_ppc_classification/main.py --input 02_ppc_classification/input/windows-16000-bands200-avg4.parquet --name mlp-16k
+python 03_ppc_distance/main.py      --input 03_ppc_distance/input/windows-16000-bands200-avg4.parquet --name mlp-16k
 python 04_compare/main.py
 ```
 
@@ -117,36 +118,37 @@ sur la détection et l'estimation de distance.
 | `band_levels_avg4` | 50 niveaux de bandes en dBFS | le spectre regroupé |
 | `rms` | seulement le niveau global | le niveau absolu, sans spectre |
 | `handcrafted` | six descripteurs de la fenêtre entière | la forme d'onde et le spectre |
-| *(vide)* | les 57 colonnes | les trois groupes ci-dessus |
+| *(vide)* | 50 niveaux de bandes | le groupe par défaut `band_levels_avg4` |
 
 Les descripteurs sont normalisés par prise. L'entropie, le centroïde, le flux
 et l'onset utilisent le spectre entier. Le taux de
 passage par zéro et le facteur de crête utilisent la forme d'onde.
 
 ```sh
-python 03_ppc_distance/main.py --model mlp --features rms --name mlp-rms
-python 03_ppc_distance/main.py --model mlp --features handcrafted --name mlp-handcrafted
-python 02_ppc_classification/main.py --model mlp --features band_levels_avg4,rms --name mlp-bands-rms
+python 01_ppc_features/main.py --with-descriptors
+python 03_ppc_distance/main.py --input 03_ppc_distance/input/windows-48000-bands200-avg4-descriptors-w100-s20.parquet --features rms --name mlp-rms
+python 03_ppc_distance/main.py --input 03_ppc_distance/input/windows-48000-bands200-avg4-descriptors-w100-s20.parquet --features handcrafted --name mlp-handcrafted
+python 02_ppc_classification/main.py --input 02_ppc_classification/input/windows-48000-bands200-avg4-descriptors-w100-s20.parquet --features band_levels_avg4,rms --name mlp-bands-rms
 ```
 
 L'option `--full-spectrum` de l'étape 01 régénère le cache FFT des anciens
 essais. Le modèle `--model cnn` utilise la colonne `logfft` de ce cache.
 
 Pour tester la puissance 4–8 kHz, lancer l'étape 01 avec `--include-b48` puis
-sélectionner `windows-<rate>-b48.parquet` avec `--input` et ajouter `b48`
+sélectionner `windows-48000-b48-w100-s20.parquet` avec `--input` et ajouter `b48`
 à `--features`.
 
 Pour entraîner sur les 100 niveaux de bandes FFT, lancer l'étape 01 avec
-`--band-levels`. Sélectionner `windows-<rate>-bands100.parquet` avec `--input`
+`--band-levels`. Sélectionner `windows-48000-bands100-w100-s20.parquet` avec `--input`
 et utiliser `--features band_levels` avec `--model mlp` pour la classification.
 
 `--band-levels-avg3` calcule 200 niveaux en dBFS et produit 67 features avec
 `--features band_levels_avg3`. Les deux dernières bandes forment le dernier groupe.
 
 `--band-levels-avg4` calcule 200 niveaux en dBFS et moyenne chaque groupe de
-quatre bandes voisines. Le cache `windows-<rate>-bands200-avg4.parquet` contient
+quatre bandes voisines. Le cache par défaut `windows-48000-bands200-avg4-w100-s20.parquet` contient
 les 50 features sélectionnées avec `--features band_levels_avg4`.
-Ajouter `--with-descriptors` produit le cache par défaut avec les 57 features.
+Ajouter `--with-descriptors` produit un cache de 57 features.
 `--with-band-descriptors` ajoute plutôt l'entropie, le centroïde, le flux et
 l'onset de chaque bande avg4. Sélectionner `band_levels_avg4,band_descriptors_avg4`
 pour entraîner sur les 250 features de ce cache.

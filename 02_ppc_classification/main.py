@@ -1,10 +1,10 @@
 """Étape 2 : entraîner et évaluer le détecteur présent/absent.
 
-  python main.py                                        # MLP sur les 57 features
+  python main.py                                        # MLP sur les 50 niveaux de bandes
   python main.py --model logistic --name logit
   python main.py --model mlp --features handcrafted --name mlp-handcrafted
 
-Entrée  input/windows-<rate>-bands200-avg4-descriptors.parquet
+Entrée  input/windows-48000-bands200-avg4-w100-s20.parquet par défaut
 Sortie  output/<nom>/ : model.joblib, metrics.json (validation + holdout), config.json,
         curves.json, learning-curves.png
 Entraînement unique avec arrêt anticipé sur la validation et évaluation

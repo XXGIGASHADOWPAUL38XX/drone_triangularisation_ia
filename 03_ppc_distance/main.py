@@ -5,7 +5,7 @@
   python main.py --model constant --name constant
   python main.py --model mlp --features handcrafted --name mlp-handcrafted
 
-Entrée  input/windows-<rate>-bands200-avg4-descriptors.parquet
+Entrée  input/windows-48000-bands200-avg4-w100-s20.parquet par défaut
 Sortie  output/<nom>/ : model.joblib, metrics.json (validation + holdout, MAE
         bornée et non bornée), config.json, curves.json, learning-curves.png
 N'apprend que sur les fenêtres des prises positives à 1-5 m, en niveaux

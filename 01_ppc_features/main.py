@@ -1,9 +1,9 @@
 """Étape 1 : WAV maîtres -> fenêtres valides + features + splits groupés.
 
-  python main.py --rate 24000 --window-ms 250 --stride-ms 125
+  python main.py
 
 Entrée  input/data/samples/           (posée par l'étape 00)
-Sortie  output/windows-<rate>-bands200-avg4-descriptors.parquet par défaut,
+Sortie  output/windows-48000-bands200-avg4-w100-s20.parquet par défaut,
         un manifeste JSON et les partitions groupées.
         output/splits.json            : partitions (groupées) — réutilisé tel
         quel s'il est présent dans input/, donc IDENTIQUE pour tous les taux.
@@ -21,8 +21,8 @@ from shutil import copyfile
 import numpy as np
 import pandas as pd
 
-from dsp import (BAND_DESCRIPTOR_GROUP, BAND_LEVEL_LAYOUTS, DEFAULT_BAND_GROUP, FFT, FLAT_COLS, HOP, LOGFFT,
-                 N_BINS, RATES, STRIDE_MS, WINDOW_MS, antialias_fir, iter_windows,
+from dsp import (BAND_DESCRIPTOR_GROUP, BAND_LEVEL_LAYOUTS, DEFAULT_BAND_GROUP, DEFAULT_CACHE_TAG,
+                 FFT, FLAT_COLS, HOP, LOGFFT, MASTER, N_BINS, RATES, STRIDE_MS, WINDOW_MS, antialias_fir, iter_windows,
                  n_frames, read_wav48, recording_features, resolve_features, stride_samples)
 from features import BAND_DESCRIPTOR_NAMES, HANDCRAFTED_COLS
 
@@ -141,7 +141,7 @@ def build_rows(root, rate, *, window_ms=WINDOW_MS, stride_ms=STRIDE_MS, include_
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data", type=Path, default=INPUT / "data")
-    p.add_argument("--rate", type=int, choices=RATES, default=24000)
+    p.add_argument("--rate", type=int, choices=RATES, default=MASTER)
     p.add_argument("--window-ms", type=int, default=WINDOW_MS, help="durée d'une fenêtre en ms")
     p.add_argument("--stride-ms", type=float, default=STRIDE_MS, help="pas entre fenêtres en ms")
     p.add_argument("--cache-tag", help="suffixe du cache pour conserver plusieurs essais")
@@ -168,7 +168,6 @@ def main():
         p.error("--cache-tag doit contenir uniquement des lettres, chiffres, tirets ou underscores")
     if not (a.band_level_group or a.full_spectrum or a.include_b48):
         a.band_level_group = DEFAULT_BAND_GROUP
-        a.with_descriptors = not a.with_band_descriptors
     if a.with_descriptors and not a.band_level_group:
         p.error("--with-descriptors nécessite un mode --band-levels")
     if a.with_band_descriptors and a.band_level_group != DEFAULT_BAND_GROUP:
@@ -227,8 +226,11 @@ def main():
     windows = (pd.concat(frames, ignore_index=True).merge(meta, on="sample_id", validate="many_to_one")
                .sort_values(["sample_id", "start_sample"])[keys + ["start_sample", *feature_cols]])
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    if a.cache_tag:
-        tag += "-" + a.cache_tag
+    cache_tag = a.cache_tag
+    if not cache_tag and (a.window_ms, a.stride_ms) == (WINDOW_MS, STRIDE_MS):
+        cache_tag = DEFAULT_CACHE_TAG
+    if cache_tag:
+        tag += "-" + cache_tag
     parquet = OUTPUT / f"windows-{tag}.parquet"
     windows.to_parquet(parquet, index=False)
     (OUTPUT / "splits.json").write_text(json.dumps(table, indent=2) + "\n")

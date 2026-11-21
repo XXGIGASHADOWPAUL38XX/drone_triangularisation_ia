@@ -13,11 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "01_ppc_features")]
 
 import ml
-from dsp import resolve_features
+from dsp import DEFAULT_FEATURES, default_window_cache, resolve_features
 
 SETTINGS = {
-    "classification": ("02_ppc_classification", "w100-s20", 12, 4),
-    "distance": ("03_ppc_distance", "w50-s25", 60, 8),
+    "classification": ("02_ppc_classification", 12, 4),
+    "distance": ("03_ppc_distance", 60, 8),
 }
 BASELINE = dict(lr=0.003, dropout=0.15, hidden_units=16, batch_size=128, weight_decay=0.01)
 
@@ -37,8 +37,8 @@ def main():
         parser.error("--trials and --threads must be positive")
     torch.set_num_threads(args.threads)
 
-    stage, window, epochs, patience = SETTINGS[args.task]
-    cache = args.input or ROOT / stage / "input" / f"windows-48000-bands200-avg4-{window}.parquet"
+    stage, epochs, patience = SETTINGS[args.task]
+    cache = args.input or default_window_cache(ROOT / stage / "input")
     out = ROOT / "04_compare" / "output" / args.name / args.task
     out.mkdir(parents=True, exist_ok=False)
     frame = ml.task_frame(ml.load(cache), args.task)
@@ -46,7 +46,7 @@ def main():
     if train.empty or valid.empty or test.empty:
         parser.error("the cache must provide nonempty train, validation, and holdout splits")
     objective_frame = valid if args.objective_split == "validation" else test
-    cols = resolve_features("band_levels_avg4")
+    cols = resolve_features(DEFAULT_FEATURES)
     metric = ml.selection_metric(args.task)
     seed = 42
     study = optuna.create_study(
