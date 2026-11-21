@@ -10,7 +10,7 @@ sans casser la méthodologie.
 ## Le repo en une image
 
 ```
-00_download_dataset/   corpus (local ou HF privé)      -> output/data/samples/
+00_download_dataset/   corpus (local ou HF privé)      -> output/data/ (samples/ ou data/)
 01_ppc_features/       fenêtres + features + splits     -> output/windows-<rate>.parquet
 02_ppc_classification/ détecteur (CNN gelé, baselines)  -> output/<run>/ (modèle + métriques)
 03_ppc_distance/      distance (MLP gelé, baselines)  -> output/<run>/ (modèle + métriques)
@@ -41,12 +41,14 @@ output/<run>/ : model.joblib, metrics.json, config.json, cv.csv, curves.json, co
 
 | Tâche | Modèle retenu | Entrée | Dev (CV groupée) | Holdout |
 |---|---|---|---|---|
-| Détection | **CNN 2D** : 1 bloc conv 32 canaux, dropout 0.15, ~450 paramètres | log-mel 32×22 **relative**, sans one-hot téléphone | 97,4 % balanced acc. | 96,5 % |
-| Distance | **MLP** : 16 cachées, dropout 0.15, ~577 paramètres, sortie [1, 5] m | 34 niveaux **absolus** (32 bandes mel + 4–8 kHz + RMS), sans one-hot | MAE 0,41–0,43 m | 0,50 m |
+| Détection | **CNN 2D** : 1 bloc conv 32 canaux, dropout 0.15, ~450 paramètres | log-mel 32×22 **relative**, sans one-hot téléphone | 97,5 % balanced acc. | 96,2 % |
+| Distance | **MLP** : 16 cachées, dropout 0.15, ~577 paramètres, sortie [1, 5] m | 34 niveaux **absolus** (32 bandes mel + 4–8 kHz + RMS), sans one-hot | MAE 0,43 m | 0,46 m |
 
 Baselines à refaire à côté : logistique relative (90,8 % holdout), ridge
 (~0,59 m), constant 3 m (1,09 m). Rejetés par l'HPO : one-hot téléphone,
-bande 4–8 kHz seule, calibration log-distance à 1 m.
+bande 4–8 kHz seule, calibration log-distance à 1 m. Chiffres du tableau :
+reproduction locale (CPU) du protocole gelé ; la RTX 3090 donne le même
+protocole à 97,4 % / 96,5 % (bruit flottant GPU attendu).
 
 ## Démarrage rapide
 
@@ -56,7 +58,7 @@ Python 3.12 ; PyTorch s'installe à part (index CPU ou CUDA) :
 python3.12 -m venv .venv && source .venv/bin/activate
 python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.8.0
 python -m pip install -r requirements.txt
-python -m pytest -q     # 15 tests, dont la parité 24 kHz contre le cache historique
+python -m pytest -q     # 17 tests, dont la parité 24 kHz contre le cache historique
 ```
 
 ```sh
@@ -91,9 +93,9 @@ donc tous les taux comparent sur les mêmes prises et les mêmes plis.
 
 ```sh
 python 01_ppc_features/main.py --rate 16000        # idem --rate 48000
-# puis, pour tester ce taux :
-python 02_ppc_classification/main.py --input input/windows-16000.parquet --name cnn-16k
-python 03_ppc_distance/main.py      --input input/windows-16000.parquet --name mlp-16k
+# puis, pour tester ce taux (depuis la racine) :
+python 02_ppc_classification/main.py --input 02_ppc_classification/input/windows-16000.parquet --name cnn-16k
+python 03_ppc_distance/main.py      --input 03_ppc_distance/input/windows-16000.parquet --name mlp-16k
 python 04_compare/main.py
 ```
 

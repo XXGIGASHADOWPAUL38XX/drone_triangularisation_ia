@@ -94,8 +94,9 @@ class CnnPresence:
         best = np.inf
         for epoch in range(1, epochs + 1):
             net.train()
+            order = torch.randperm(len(tx), generator=gen)  # une permutation par époque
             for start in range(0, len(tx), BATCH_CNN):
-                idx = torch.randperm(len(tx), generator=gen)[start:start + BATCH_CNN]
+                idx = order[start:start + BATCH_CNN]
                 optim.zero_grad(set_to_none=True)
                 loss = (criterion(net(tx[idx].unsqueeze(1)).flatten(), ty[idx]) * tw[idx]).mean()
                 loss.backward()

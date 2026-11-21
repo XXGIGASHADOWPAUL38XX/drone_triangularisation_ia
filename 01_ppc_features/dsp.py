@@ -55,7 +55,8 @@ class Decimator:
         padded = np.concatenate((self.history, x))
         filtered = np.convolve(padded, self.fir, "valid")[self.phase::self.ratio]
         self.history = padded[-(len(self.fir) - 1):].copy()
-        self.phase = (self.phase + len(x)) % self.ratio
+        # le prochain bloc doit reprendre la grille globale : j ≡ -S (mod ratio)
+        self.phase = (self.phase - len(x)) % self.ratio
         return np.clip(np.rint(filtered), -32768, 32767).astype(np.int16)
 
 

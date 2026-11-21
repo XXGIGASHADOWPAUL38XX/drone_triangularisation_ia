@@ -29,11 +29,13 @@ def test_fir_24k_est_la_reference_historique():
     assert dsp.antialias_fir(48000) is None
 
 
-def test_decimateur_donne_le_meme_resultat_en_un_ou_plusieurs_appels():
+@pytest.mark.parametrize("rate,size", [(24000, 733), (16000, 733), (16000, 1024)])
+def test_decimateur_donne_le_meme_resultat_en_un_ou_plusieurs_appels(rate, size):
+    # 733 et 1024 ne sont pas multiples de 3 : le signe de la phase compte à 16 kHz
     pcm = np.random.default_rng(0).integers(-3000, 3000, 50000, dtype=np.int16)
-    once = dsp.Decimator(24000).process(pcm)
-    dec = dsp.Decimator(24000)
-    parts = [dec.process(pcm[i:i + 733]) for i in range(0, len(pcm), 733)]
+    once = dsp.Decimator(rate).process(pcm)
+    dec = dsp.Decimator(rate)
+    parts = [dec.process(pcm[i:i + size]) for i in range(0, len(pcm), size)]
     assert np.array_equal(np.concatenate(parts), once)
 
 

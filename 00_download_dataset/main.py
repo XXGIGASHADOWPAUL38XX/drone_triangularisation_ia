@@ -3,7 +3,8 @@
   python main.py --local /home/noe/Projects/EDTH_data-collector/data
   python main.py --repo ImAPancake/EDTH_drone_distance_raw --revision <sha>
 
-La sortie output/data/samples/ alimente l'entrée de l'étape 01.
+La sortie output/data/ (samples/ en local, AudioFolder data/ via HF)
+alimente l'entrée de l'étape 01.
 """
 import argparse
 import os
@@ -13,7 +14,7 @@ from shutil import copytree
 from dotenv import load_dotenv
 
 STAGE = Path(__file__).resolve().parent
-OUTPUT = STAGE / "output" / "data" / "samples"
+OUT_DATA = STAGE / "output" / "data"  # samples/ (local) ou data/ (AudioFolder HF)
 NEXT_INPUT = STAGE.parent / "01_ppc_features" / "input"
 
 
@@ -28,15 +29,16 @@ def main():
         p.error("préciser --local ou --repo")
     if a.local:
         src = a.local / "samples" if (a.local / "samples").is_dir() else a.local
-        copytree(src, OUTPUT, dirs_exist_ok=True)
+        copytree(src, OUT_DATA / "samples", dirs_exist_ok=True)
+        n = len(list((OUT_DATA / "samples").glob("*/audio.wav")))
     else:
         from huggingface_hub import snapshot_download
         root = Path(snapshot_download(a.repo, revision=a.revision, repo_type="dataset",
-                                      token=os.getenv("HF_TOKEN") or True, allow_patterns=["samples/*"]))
-        copytree(root / "samples", OUTPUT, dirs_exist_ok=True)
-    n = len([d for d in OUTPUT.iterdir() if (d / "metadata.json").is_file()])
-    print(f"{n} prises dans {OUTPUT}")
-    copytree(OUTPUT, NEXT_INPUT / "data" / "samples", dirs_exist_ok=True)
+                                      token=os.getenv("HF_TOKEN") or True, allow_patterns=["data/*"]))
+        copytree(root, OUT_DATA, dirs_exist_ok=True)  # AudioFolder : data/<id>.wav + data/metadata.csv
+        n = len(list((OUT_DATA / "data").glob("*.wav")))
+    print(f"{n} prises dans {OUT_DATA}")
+    copytree(OUT_DATA, NEXT_INPUT / "data", dirs_exist_ok=True)
     print(f"copié vers {NEXT_INPUT / 'data'}")
 
 
