@@ -1,0 +1,234 @@
+{
+  "00d1cf9a-fbc0-4a11-96ec-0757f42dec2b": {
+    "group_id": "event-0017",
+    "split": "test"
+  },
+  "01da00f1-96c2-4fa0-85e2-ed1d31203c8e": {
+    "group_id": "event-0015",
+    "split": "train"
+  },
+  "046a4d5c-8155-425b-b018-2ae49a5871bd": {
+    "group_id": "event-0002",
+    "split": "validation"
+  },
+  "0c988d3b-c3d6-4161-ac46-e51011162da2": {
+    "group_id": "event-0014",
+    "split": "train"
+  },
+  "0cbe4fe2-b62f-4934-803c-e50334454820": {
+    "group_id": "event-0015",
+    "split": "train"
+  },
+  "0d3f06d9-93e0-405b-9fd6-da375d08842a": {
+    "group_id": "event-0016",
+    "split": "validation"
+  },
+  "1151ff72-e5a3-48a4-bd2f-0c79efa16dd4": {
+    "group_id": "event-0014",
+    "split": "train"
+  },
+  "145d88e9-d811-4330-b0fa-1b5c46aa6c75": {
+    "group_id": "event-0017",
+    "split": "test"
+  },
+  "16cf6d57-2227-4c51-aec1-3de249271e10": {
+    "group_id": "event-0000",
+    "split": "train"
+  },
+  "1853a4ad-b945-4c47-a35c-fc0a1de00ab4": {
+    "group_id": "event-0008",
+    "split": "train"
+  },
+  "1f41ceef-b476-4d25-8c4e-29de3feca79f": {
+    "group_id": "event-0014",
+    "split": "train"
+  },
+  "2a6df560-0331-4a1f-b17c-1e94fd7708b1": {
+    "group_id": "event-0018",
+    "split": "validation"
+  },
+  "2dace1a0-ee1c-4c6e-b017-2f8b1753497a": {
+    "group_id": "event-0017",
+    "split": "test"
+  },
+  "2e05b5dd-688c-42d8-b920-760290dcb77a": {
+    "group_id": "event-0014",
+    "split": "train"
+  },
+  "34472602-c04e-4ccd-8425-334f46f63633": {
+    "group_id": "event-0014",
+    "split": "train"
+  },
+  "36d8e505-c41c-4da0-a76f-55c1be5574f1": {
+    "group_id": "event-0019",
+    "split": "test"
+  },
+  "380fae13-4435-4daf-9626-b7947a79753f": {
+    "group_id": "event-0010",
+    "split": "validation"
+  },
+  "3a574128-053e-4b7b-b73c-c63c3a45dcbf": {
+    "group_id": "event-0013",
+    "split": "test"
+  },
+  "578eef7c-5525-447f-bb73-6167b2d8ff81": {
+    "group_id": "event-0021",
+    "split": "validation"
+  },
+  "5c5ba54d-7689-4929-bbd8-2b790c33fcf3": {
+    "group_id": "event-0016",
+    "split": "validation"
+  },
+  "65496855-cceb-4e78-8f9c-557bf046ec0a": {
+    "group_id": "event-0012",
+    "split": "train"
+  },
+  "68a2ec40-2c63-4454-8047-f1a5df989cb5": {
+    "group_id": "event-0013",
+    "split": "test"
+  },
+  "69bed6a6-f08f-4653-802e-f4da3820b041": {
+    "group_id": "event-0023",
+    "split": "train"
+  },
+  "6cac7c61-5234-4362-bdfb-6bcd6a16ae54": {
+    "group_id": "event-0014",
+    "split": "train"
+  },
+  "6d356543-c531-4cd1-896d-0b2304f4a48b": {
+    "group_id": "event-0015",
+    "split": "train"
+  },
+  "6e99e7ac-64ae-4ea0-a064-62e5acd405bf": {
+    "group_id": "event-0015",
+    "split": "train"
+  },
+  "71e377cd-2688-4e7b-b1ad-d81f2dc51531": {
+    "group_id": "event-0021",
+    "split": "validation"
+  },
+  "7a0c33c0-a801-4a83-a101-95b09919029c": {
+    "group_id": "event-0015",
+    "split": "train"
+  },
+  "8343507e-ed21-4931-858e-799bc1502d73": {
+    "group_id": "event-0002",
+    "split": "validation"
+  },
+  "927d6fd3-b431-4daa-9c51-2f5c544bd3f5": {
+    "group_id": "event-0005",
+    "split": "validation"
+  },
+  "9638adec-b9b4-48a4-aff2-201ea5d844ac": {
+    "group_id": "event-0013",
+    "split": "test"
+  },
+  "98329c68-6be7-4f7e-bb1f-937510800884": {
+    "group_id": "event-0024",
+    "split": "train"
+  },
+  "a469ff59-4a19-44cd-a6be-136018ed6da5": {
+    "group_id": "event-0016",
+    "split": "validation"
+  },
+  "aafd8430-4207-46ca-b2b0-ff8722773a47": {
+    "group_id": "event-0014",
+    "split": "train"
+  },
+  "ab078ae7-17e4-41fe-a2ab-581c998d43a9": {
+    "group_id": "event-0018",
+    "split": "validation"
+  },
+  "b1533fb4-42d3-474d-943e-5db95a7e21a0": {
+    "group_id": "event-0019",
+    "split": "test"
+  },
+  "b8aae492-5bb1-4be9-bd9b-51b4b89ec312": {
+    "group_id": "event-0007",
+    "split": "train"
+  },
+  "bbdf3fd6-10d0-4e89-9002-4c4702f2a598": {
+    "group_id": "event-0015",
+    "split": "train"
+  },
+  "c34cc441-a201-493c-8d64-26c252ecbfe0": {
+    "group_id": "event-0004",
+    "split": "train"
+  },
+  "c4dca16f-1d28-4f8f-812f-a5b3e5129902": {
+    "group_id": "event-0015",
+    "split": "train"
+  },
+  "c5cd042e-5842-410c-a3fe-05baf50aec5d": {
+    "group_id": "event-0007",
+    "split": "train"
+  },
+  "cb9e2c65-0def-46b2-aebd-79da3e54f935": {
+    "group_id": "event-0006",
+    "split": "test"
+  },
+  "d21886d3-a87d-4648-81b0-70b74f494b38": {
+    "group_id": "event-0015",
+    "split": "train"
+  },
+  "d551b7bc-3c96-42fb-8e68-c26720f5d637": {
+    "group_id": "event-0016",
+    "split": "validation"
+  },
+  "dbb4b2f2-d072-49e4-8195-cdcc0afc65ac": {
+    "group_id": "event-0017",
+    "split": "test"
+  },
+  "dbf77770-c116-4201-ba74-9e14632e238b": {
+    "group_id": "event-0022",
+    "split": "train"
+  },
+  "dc732d1b-b03e-4ece-b19c-587bf374b5a5": {
+    "group_id": "event-0011",
+    "split": "test"
+  },
+  "e113cae2-d05a-4df0-9281-c20ef3882362": {
+    "group_id": "event-0017",
+    "split": "test"
+  },
+  "e227c56d-3234-4997-a6c5-15d64127c826": {
+    "group_id": "event-0020",
+    "split": "train"
+  },
+  "e41e45cb-c5ce-4e15-ba2b-ca6a44756b40": {
+    "group_id": "event-0018",
+    "split": "validation"
+  },
+  "e476dea2-c67e-4f8c-a0d1-a4f2a57ec5e7": {
+    "group_id": "event-0014",
+    "split": "train"
+  },
+  "e69d5038-c151-4ad6-b9cc-6924cfe76ae7": {
+    "group_id": "event-0015",
+    "split": "train"
+  },
+  "e79c8b8d-5f0e-45e7-ab43-8988bd2c9781": {
+    "group_id": "event-0007",
+    "split": "train"
+  },
+  "ef897036-4c44-49f0-af16-44a751fd3eac": {
+    "group_id": "event-0009",
+    "split": "train"
+  },
+  "f0af2938-5408-46ee-8be4-8488475c6caa": {
+    "group_id": "event-0013",
+    "split": "test"
+  },
+  "f12e1fed-a8b8-4645-b74d-2d0c171508db": {
+    "group_id": "event-0003",
+    "split": "test"
+  },
+  "f1a06756-df29-46ea-a3d2-191feb02190a": {
+    "group_id": "event-0001",
+    "split": "test"
+  },
+  "f348c31d-a01b-446f-9b3b-d30417a4549e": {
+    "group_id": "event-0015",
+    "split": "train"
+  }
+}

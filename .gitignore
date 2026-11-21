@@ -6,7 +6,8 @@ __pycache__/
 /artifacts/
 /runs/
 00_download_dataset/output/
-01_ppc_features/input/
+01_ppc_features/input/*
+!01_ppc_features/input/splits.json
 01_ppc_features/output/
 02_ppc_classification/input/
 02_ppc_classification/output/

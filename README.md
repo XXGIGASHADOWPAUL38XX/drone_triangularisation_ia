@@ -102,6 +102,9 @@ expériences sur la colonne `validation`. La colonne `dev_cv` correspond aux run
 Les features dépendent du taux, **pas les splits** : `splits.json` est écrit
 une fois puis réutilisé (l'étape 01 le recopie dans son propre `input/`),
 donc tous les taux comparent les mêmes partitions d'entraînement, de validation et de test.
+Le fichier est **versionné** (`01_ppc_features/input/splits.json`) : une machine
+fraîche le récupère par `git pull`, et l'étape 01 doit afficher
+« partitions réutilisées » — sinon les résultats ne sont plus comparables.
 Les anciens splits gardent leur holdout et réutilisent le pli 0 comme validation.
 Le pipeline et Optuna utilisent par défaut 48 kHz, une fenêtre de 100 ms et un pas de 20 ms.
 Les options `--window-ms` et `--stride-ms` règlent la durée et le pas en millisecondes.
