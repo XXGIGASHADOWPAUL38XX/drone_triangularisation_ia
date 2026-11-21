@@ -1,0 +1,4 @@
+datasets[audio]
+numpy
+python-dotenv
+scipy

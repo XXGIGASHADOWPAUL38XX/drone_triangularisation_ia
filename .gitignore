@@ -1,0 +1,5 @@
+/00_download_dataset/output/train/
+/01_ppc_features/input/train/
+/01_ppc_features/output/features.pkl
+/02_ppc_classification/input/features.pkl
+/02_ppc_classification/output/classification.pkl
