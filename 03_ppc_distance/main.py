@@ -44,6 +44,10 @@ def main():
     p.add_argument("--dropout", type=float, default=None)
     p.add_argument("--hidden-units", type=int, choices=[8, 16, 32, 64], default=16)
     p.add_argument("--depth", type=int, choices=[1, 2, 3], default=1)
+    p.add_argument("--batch-size", type=int, choices=[128, 256, 512], default=128,
+                   help="reproduire exactement un gagnant Optuna (batch_size)")
+    p.add_argument("--weight-decay", type=float, default=0.01,
+                   help="reproduire exactement un gagnant Optuna (weight_decay)")
     p.add_argument("--seed", type=int, default=42)
     a = p.parse_args()
     if a.input is None:

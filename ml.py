@@ -296,7 +296,8 @@ class Constant:
         return 0
 
 
-def build(task, name, lr=None, dropout=None, relative=False, *, hidden_units=16, depth=1):
+def build(task, name, lr=None, dropout=None, relative=False, *, hidden_units=16, depth=1,
+          batch_size=BATCH_MLP, weight_decay=0.01):
     """Construit un modèle ; lr/dropout par défaut = valeurs gelées de l'HPO."""
     frozen = FROZEN.get((task, name), dict(lr=3e-3, dropout=0.15))
     lr = frozen["lr"] if lr is None else float(lr)
@@ -304,7 +305,8 @@ def build(task, name, lr=None, dropout=None, relative=False, *, hidden_units=16,
     if name == "cnn":
         return CnnPresence(lr, dropout)  # relatif par conception, sans option
     if name == "mlp":
-        return Mlp(task, lr, dropout, relative, hidden_units=hidden_units, depth=depth)
+        return Mlp(task, lr, dropout, relative, hidden_units=hidden_units, depth=depth,
+                   batch_size=batch_size, weight_decay=weight_decay)
     if name == "logistic":
         return Linear("classification", "logistic", relative)
     if name == "ridge":
@@ -417,7 +419,9 @@ def experiment(task, a):
     if cols and not set(cols).issubset(frame):
         raise SystemExit("cache incomplet pour les features demandées. Relancer l'étape 01.")
     model = build(task, a.model, lr, dropout, a.relative,
-                  hidden_units=getattr(a, "hidden_units", 16), depth=getattr(a, "depth", 1))
+                  hidden_units=getattr(a, "hidden_units", 16), depth=getattr(a, "depth", 1),
+                  batch_size=getattr(a, "batch_size", BATCH_MLP),
+                  weight_decay=getattr(a, "weight_decay", 0.01))
     model.fit(train, valid, device=a.device, epochs=a.epochs, patience=a.patience, seed=a.seed, cols=cols)
     validation = report(valid, model.predict(valid), task)
     test_report = report(test, model.predict(test), task)
@@ -435,7 +439,8 @@ def experiment(task, a):
                   epochs=a.epochs, best_epoch=best_epoch, seed=a.seed, device=a.device,
                   parameters=model.parameter_count(), validation=validation["overall"])
     if a.model == "mlp":
-        config.update(depth=model.depth, hidden_units=model.hidden_units)
+        config.update(depth=model.depth, hidden_units=model.hidden_units,
+                      batch_size=model.batch_size, weight_decay=model.weight_decay)
     (out / "config.json").write_text(json.dumps(config, indent=2, allow_nan=False) + "\n")
     (out / "metrics.json").write_text(json.dumps(
         {"task": task, "model": a.model, "cache": Path(a.input).name, "validation": validation,

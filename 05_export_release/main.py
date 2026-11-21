@@ -19,6 +19,7 @@ canal de diffusion est le repo HF privé, l'application pinne une révision.
 """
 import argparse
 import base64
+import csv
 import hashlib
 import json
 import os
@@ -51,6 +52,15 @@ FROZEN_SOURCES = {"dsp.py": ROOT / "01_ppc_features" / "dsp.py",
 
 def _b64(a):
     return base64.b64encode(np.ascontiguousarray(a).tobytes()).decode()
+
+
+def _wav_index(root):
+    """sample_id -> WAV maître, comme l'étape 01 : layout samples/ ou AudioFolder CSV."""
+    if (root / "samples").is_dir():
+        return {p.parent.name: p for p in sorted((root / "samples").glob("*/audio.wav"))}
+    path = root / "data" / "metadata.csv"
+    with path.open(newline="", encoding="utf-8") as f:
+        return {row["sample_id"]: root / "data" / row["file_name"] for row in csv.DictReader(f)}
 
 
 def _load_run(path, task):
@@ -269,12 +279,12 @@ def build(a):
     (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, allow_nan=False) + "\n")
     det = joblib.load(tmp / "detection" / "model.joblib")
     dis = joblib.load(tmp / "distance" / "model.joblib")
-    wav_root = Path(a.data)
+    wavs = _wav_index(Path(a.data))
     cases = []
     for row in _select_cases(frame):
-        wav = wav_root / "samples" / row.sample_id / "audio.wav"
-        if not wav.is_file():
-            raise SystemExit(f"WAV maître introuvable : {wav}")
+        wav = wavs.get(str(row.sample_id))
+        if wav is None or not wav.is_file():
+            raise SystemExit(f"WAV maître introuvable : {row.sample_id} dans {a.data}")
         case = _case(row, dsp.read_wav48(wav), rate, window_ms, recompute, required, det, dis)
         cases.append(case)
         print(f"  parité : {case['sample_id'][:8]} present={case['drone_present']} "
@@ -327,7 +337,7 @@ def main():
     p.add_argument("--cache", type=Path, default=None,
                    help="parquet de l'étape 01 (défaut : input du run détection)")
     p.add_argument("--data", type=Path, default=ROOT / "01_ppc_features" / "input" / "data",
-                   help="corpus des WAV maîtres (extraits de parité)")
+                   help="corpus des WAV maîtres, samples/ ou AudioFolder (extraits de parité)")
     p.add_argument("--out", type=Path, default=STAGE / "output")
     p.add_argument("--release", default=None, help="défaut : edth.audio.<taux>k-w<fenêtre_ms>.r1")
     p.add_argument("--force", action="store_true", help="écraser un bundle existant")

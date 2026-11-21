@@ -5,6 +5,7 @@ entraînements 02/03, export, puis rejeu indépendant du lot de parité avec le
 code FIGÉ du bundle (frozen/) — tout doit être identique aux valeurs attendues.
 """
 import base64
+import csv
 import hashlib
 import json
 import shutil
@@ -40,29 +41,45 @@ def _wav(path, pcm48):
         w.writeframes(pcm48.tobytes())
 
 
-def _corpus(root):
-    """8 groupes de 4 prises de 2 s : bruit faible, ou sinus 3 kHz si le drone est présent."""
+def _corpus(root, layout):
+    """8 groupes de 4 prises de 2 s : bruit faible, ou sinus 3 kHz si le drone est présent.
+
+    layout "samples" = dossier par prise (copie locale) ; "audiofolder" = CSV
+    AudioFolder (le layout du téléchargement HF de l'étape 00).
+    """
     rng = np.random.default_rng(3)
     t = np.arange(2 * 48000) / 48000
+    rows = []
     for g in range(8):
         for k, dist in enumerate([None, 1.0, 3.0, 5.0]):
             sid = f"take-{g}-{k}"
             pcm = rng.integers(-200, 200, len(t)).astype(np.int16)
             if dist is not None:
                 pcm = pcm + (int(9000 / dist) * np.sin(2 * np.pi * 3000 * t)).astype(np.int16)
-            _wav(root / "samples" / sid / "audio.wav", pcm.astype(np.int16))
+            pcm = pcm.astype(np.int16)
             when = datetime.fromtimestamp(1700000000 + 10 * g + 0.1 * k, tz=timezone.utc)
-            (root / "samples" / sid / "metadata.json").write_text(json.dumps(dict(
-                sample_id=sid, device_id=f"D{g % 2}", captured_at=when.isoformat(),
-                drone_present=dist is not None, distance_m=dist, duration_seconds=2.0,
-                mode="hand", capture_settings=dict(capture_contract="edth.web-pcm.v1"))))
+            meta = dict(sample_id=sid, device_id=f"D{g % 2}", captured_at=when.isoformat(),
+                        drone_present=dist is not None, distance_m=dist, duration_seconds=2.0,
+                        mode="hand", capture_settings=dict(capture_contract="edth.web-pcm.v1"))
+            if layout == "samples":
+                _wav(root / "samples" / sid / "audio.wav", pcm)
+                (root / "samples" / sid / "metadata.json").write_text(json.dumps(meta))
+            else:
+                _wav(root / "data" / f"{sid}.wav", pcm)
+                rows.append(dict(meta, file_name=f"{sid}.wav",
+                                 capture_settings=json.dumps(meta["capture_settings"])))
+    if layout != "samples":
+        with (root / "data" / "metadata.csv").open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
 
 
-@pytest.fixture(scope="module")
-def bundle(tmp_path_factory):
-    corpus = tmp_path_factory.mktemp("corpus")
-    _corpus(corpus)
-    stage = tmp_path_factory.mktemp("stage") / "01_ppc_features"
+@pytest.fixture(scope="module", params=["samples", "audiofolder"])
+def bundle(request, tmp_path_factory):
+    corpus = tmp_path_factory.mktemp(f"corpus-{request.param}")
+    _corpus(corpus, request.param)
+    stage = tmp_path_factory.mktemp(f"stage-{request.param}") / "01_ppc_features"
     shutil.copytree(ROOT / "01_ppc_features", stage, ignore=shutil.ignore_patterns("data", "output"))
     (stage / "input" / "splits.json").unlink(missing_ok=True)  # partitions fraîches pour ce corpus
     subprocess.run([sys.executable, str(stage / "main.py"), "--data", str(corpus)], check=True, cwd=stage)
