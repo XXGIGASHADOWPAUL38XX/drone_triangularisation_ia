@@ -17,6 +17,7 @@ import ml
 
 COLLECTOR = Path("/home/noe/Projects/EDTH_data-collector/data")
 PILOT = ROOT / "artifacts/pilot-v2/windows.parquet"
+PILOT_ANCHOR = ROOT / "artifacts/pilot-v2/splits.json"
 
 
 # ---------------------------------------------------------------- audio / features
@@ -196,18 +197,23 @@ def test_experience_complete(tmp_path):
 
 # ---------------------------------------------------------------- intégration réelle
 
-@pytest.mark.skipif(not (COLLECTOR / "samples").is_dir() or not PILOT.is_file(),
+@pytest.mark.skipif(not (COLLECTOR / "samples").is_dir() or not PILOT.is_file()
+                    or not PILOT_ANCHOR.is_file(),
                     reason="corpus local ou cache historique absent")
 def test_parite_cache_24k_contre_pilot_v2(tmp_path):
     """Le dsp actuel redonne la grille 1 s / 250 ms, les partitions migrées et le RMS du pilot."""
     stage = tmp_path / "01_ppc_features"
     shutil.copytree(ROOT / "01_ppc_features", stage, ignore=shutil.ignore_patterns("data", "output"))
+    # le collecteur contient plus de prises que le pilote : figer l'ancre du
+    # pilote et borner la comparaison aux prises historiques (les nouvelles
+    # restent « excluded », leurs fenêtres dans le cache sont écartées)
+    shutil.copyfile(PILOT_ANCHOR, stage / "input" / "splits.json")
     subprocess.run([sys.executable, str(stage / "main.py"), "--data", str(COLLECTOR), "--rate", "24000",
                     "--window-ms", "1000", "--stride-ms", "250", "--with-descriptors"],
                    check=True, cwd=stage)
     old = pd.read_parquet(PILOT).sort_values(["sample_id", "start_sample_24k"]).reset_index(drop=True)
     new = pd.read_parquet(stage / "output" / "windows-24000-bands200-avg4-descriptors.parquet")
-    new = new.sort_values(["sample_id", "start_sample"]).reset_index(drop=True)
+    new = new[new.split != "excluded"].sort_values(["sample_id", "start_sample"]).reset_index(drop=True)
     assert len(old) == len(new) == 9748
     expect = np.where(old.split == "test", "test", np.where(old.fold == 0, "validation", "train"))
     assert (expect == new.split.values).all()  # dev fold 0 -> validation, folds 1-2 -> train

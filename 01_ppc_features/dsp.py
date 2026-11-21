@@ -44,10 +44,10 @@ FEATURE_SETS = {"fft": FFT_COLS, "rms": ["rms_db"], "handcrafted": HANDCRAFTED_C
 DEFAULT_FEATURES = DEFAULT_BAND_GROUP
 
 
-def default_window_cache(directory, *, full_spectrum=False, classification=False):
+def default_window_cache(directory, *, full_spectrum=False, classification=False, variant=""):
     suffix = "" if full_spectrum else "-bands200-avg4"
     tag = f"w{WINDOW_MS}-s{CLASSIFICATION_STRIDE_MS}" if classification else DEFAULT_CACHE_TAG
-    preferred = directory / f"windows-{MASTER}{suffix}-{tag}.parquet"
+    preferred = directory / f"windows-{MASTER}{suffix}-{tag}{variant}.parquet"
     if full_spectrum and not preferred.is_file():
         for rate in (24000, 16000, 48000):
             candidate = directory / f"windows-{rate}.parquet"

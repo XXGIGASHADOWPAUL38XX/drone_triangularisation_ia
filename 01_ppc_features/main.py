@@ -65,7 +65,7 @@ def assign_splits(rows, seed=SEED):
     live = [r for r in rows if r["valid_windows"]]
     groups = sorted({r["group_id"] for r in live})
     devices = sorted({r["device_id"] for r in live})
-    dists = sorted({r["distance_m"] for r in live if r["drone_present"] and 1 <= r["distance_m"] <= 5})
+    dists = sorted({r["distance_m"] for r in live if r["drone_present"] and 1 <= r["distance_m"] <= 7})
     if len(groups) < 4 or len(dists) < 2:
         raise ValueError("trop peu de groupes ou de distances pour train/validation/test")
     x = np.zeros((len(groups), 3 + len(dists) + len(devices)))
@@ -100,7 +100,7 @@ def assign_splits(rows, seed=SEED):
 
 def build_rows(root, rate, *, window_ms=WINDOW_MS, stride_ms=STRIDE_MS, include_b48=False,
                band_level_group=None, include_descriptors=False, include_band_descriptors=False,
-               export_classification=False):
+               export_classification=False, contracts=("edth.web-pcm.v1",)):
     """Valide les métadonnées, lit les WAV stricts, calcule les fenêtres."""
     rows, frames, seen = [], [], set()
     classification_frames = []
@@ -120,8 +120,12 @@ def build_rows(root, rate, *, window_ms=WINDOW_MS, stride_ms=STRIDE_MS, include_
                  drone_present=present, distance_m=d, duration_s=float(m["duration_seconds"]),
                  valid_windows=0)
         rows.append(r)
-        if m["mode"] != "hand" or m["capture_settings"].get("capture_contract") != "edth.web-pcm.v1":
-            r["reason"] = "hors contrat de capture strict en main"
+        if m["mode"] != "hand":
+            r["reason"] = f"mode non entraînable : {m['mode']!r}"
+            continue
+        contract = m["capture_settings"].get("capture_contract")
+        if contract not in contracts:
+            r["reason"] = f"contrat de capture non accepté : {contract!r}"
             continue
         pcm = read_wav48(path)
         r["duration_s"] = len(pcm) / 48000
@@ -151,6 +155,8 @@ def build_rows(root, rate, *, window_ms=WINDOW_MS, stride_ms=STRIDE_MS, include_
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data", type=Path, default=INPUT / "data")
+    p.add_argument("--webkit", action="store_true",
+                   help="accepter aussi le contrat edth.web-pcm.webkit.v1 (captures iPhone)")
     p.add_argument("--rate", type=int, choices=RATES, default=MASTER)
     p.add_argument("--window-ms", type=int, default=WINDOW_MS, help="durée d'une fenêtre en ms")
     p.add_argument("--stride-ms", type=float, default=STRIDE_MS, help="pas entre fenêtres en ms")
@@ -192,10 +198,12 @@ def main():
         step_samples = stride_samples(a.rate, a.stride_ms)
     except ValueError as exc:
         p.error(str(exc))
+    contracts = ("edth.web-pcm.v1", "edth.web-pcm.webkit.v1") if a.webkit else ("edth.web-pcm.v1",)
     rows, frames, classification_frames = build_rows(
         a.data, a.rate, window_ms=a.window_ms, stride_ms=a.stride_ms, include_b48=a.include_b48,
         band_level_group=a.band_level_group, include_descriptors=a.with_descriptors,
         include_band_descriptors=a.with_band_descriptors, export_classification=export_classification,
+        contracts=contracts,
     )
     if export_classification and not classification_frames:
         raise ValueError("aucune fenêtre valide pour la classification")
@@ -248,6 +256,8 @@ def main():
     cache_tag = a.cache_tag
     if not cache_tag and (a.window_ms, a.stride_ms) == (WINDOW_MS, STRIDE_MS):
         cache_tag = DEFAULT_CACHE_TAG
+    if a.webkit:  # ne jamais écraser un cache strict avec des prises WebKit
+        cache_tag = f"{cache_tag or f'w{a.window_ms}-s{a.stride_ms:g}'.replace('.', 'p')}-webkit"
     if cache_tag:
         tag += "-" + cache_tag
     parquet = OUTPUT / f"windows-{tag}.parquet"
@@ -256,6 +266,7 @@ def main():
     fir = antialias_fir(a.rate)
     manifest = dict(rate=a.rate, window_ms=a.window_ms, stride_ms=a.stride_ms,
                     stride_samples=step_samples, source=str(a.data.resolve()), seed=SEED,
+                    capture_contracts=list(contracts),
                     fir=None if fir is None else dict(taps=len(fir), cutoff_hz=11000 if a.rate == 24000 else 7333),
                     takes=sorted(rows, key=lambda r: r["sample_id"]))
     if a.band_level_group:
@@ -274,7 +285,8 @@ def main():
     manifest_path = OUTPUT / f"manifest-{tag}.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     if export_classification:
-        classification_path = default_window_cache(OUTPUT, classification=True)
+        classification_path = default_window_cache(OUTPUT, classification=True,
+                                                  variant="-webkit" if a.webkit else "")
         classification_windows = (pd.concat(classification_frames, ignore_index=True)
                                   .merge(meta, on="sample_id", validate="many_to_one")
                                   .sort_values(["sample_id", "start_sample"]))

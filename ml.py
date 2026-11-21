@@ -4,7 +4,7 @@ Architectures gelées d'après l'HPO préliminaire (run RTX 3090) :
   - détection : CNN 2D sur le spectre FFT relatif en dB, un bloc conv 32 canaux,
     dropout 0.15, ~450 paramètres, seuil 0.5, sans one-hot téléphone ;
   - distance  : MLP 16 cachées, dropout 0.15, sur niveaux ABSOLUS pleine
-    bande, sans one-hot téléphone, sortie bornée [1, 5] m.
+    bande, sans one-hot téléphone, sortie bornée [1, 7] m.
 Baselines : logistique (détection), ridge et constant 3 m (distance).
 Tout poids d'apprentissage ou d'évaluation donne une masse égale par PRISE.
 """
@@ -243,7 +243,7 @@ class Mlp:
         p = x.ravel()
         if self.task == "classification":
             return 1 / (1 + np.exp(-np.clip(p, -60, 60)))
-        return np.clip(p, 1.0, 5.0) if bounded else p
+        return np.clip(p, 1.0, 7.0) if bounded else p
 
     def parameter_count(self):
         return int(sum(w.size + b.size for w, b in self.layers))
@@ -275,7 +275,7 @@ class Linear:
         x = self.scaler.transform(_flat_x(d, self.cols, self.relative))
         if self.task == "classification":
             return self.estimator.predict_proba(x)[:, 1]
-        return np.clip(self.estimator.predict(x), 1.0, 5.0) if bounded else self.estimator.predict(x)
+        return np.clip(self.estimator.predict(x), 1.0, 7.0) if bounded else self.estimator.predict(x)
 
     def parameter_count(self):
         return int(np.size(self.estimator.coef_) + np.size(self.estimator.intercept_))
@@ -345,9 +345,9 @@ def load(cache):
 
 
 def task_frame(d, task):
-    """La distance n'apprend que sur les présents à 1-5 m (la prise à 0,1 m reste
+    """La distance n'apprend que sur les présents à 1-7 m (la prise à 0,1 m reste
     disponible pour la détection, hors plage pour la régression)."""
-    return d[d.drone_present & d.distance_m.between(1, 5)].copy() if task == "distance" else d.copy()
+    return d[d.drone_present & d.distance_m.between(1, 7)].copy() if task == "distance" else d.copy()
 
 
 def metrics(d, task):

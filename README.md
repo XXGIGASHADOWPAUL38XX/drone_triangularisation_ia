@@ -1,4 +1,4 @@
-# EDTH — détection de drone et distance par téléphone (1–5 m, en main)
+# EDTH — détection de drone et distance par téléphone (1–7 m, en main)
 
 Pipeline en étapes numérotées, chacune dans son dossier avec ses données
 entrantes (`input/`) et sortantes (`output/`) : on peut inspecter, copier ou
@@ -43,7 +43,7 @@ output/<run>/ : model.joblib, metrics.json, config.json, curves.json, courbes
 | Tâche | Modèle | Entrée actuelle | Dev historique | Holdout historique |
 |---|---|---|---|---|
 | Détection | **MLP**, 16 unités cachées | 50 niveaux de bandes | 97,5 % balanced acc. (CNN) | 96,2 % (CNN) |
-| Distance | **MLP**, 16 unités cachées, sortie [1, 5] m | 50 niveaux de bandes | MAE 0,43 m | 0,46 m |
+| Distance | **MLP**, 16 unités cachées, sortie [1, 7] m | 50 niveaux de bandes | MAE 0,43 m | 0,46 m |
 
 Les scores historiques correspondent aux anciennes entrées. Régénérer les parquets à l'étape 01 et réentraîner les modèles pour évaluer les entrées FFT.
 
@@ -125,6 +125,21 @@ python 04_compare/main.py
 
 Les expériences comparent notamment l'effet de la fréquence maximale observable
 sur la détection et l'estimation de distance.
+
+### Captures WebKit (iPhone)
+
+L'étape 01 n'accepte par défaut que le contrat `edth.web-pcm.v1` : les prises
+iPhone (contrat `edth.web-pcm.webkit.v1`, profil non validé côté app) sont
+exclues du corpus. L'option `--webkit` les intègre — les caches produits
+portent un suffixe `-webkit` et se comparent aux caches stricts **avec les
+mêmes partitions**. Générer l'ancre avec `--webkit` pour couvrir tout le
+corpus (sinon les prises nouvelles restent `excluded`) :
+
+```sh
+rm 01_ppc_features/input/splits.json
+python 01_ppc_features/main.py --webkit   # ancre + caches -webkit (s20 et s50)
+python 01_ppc_features/main.py            # caches stricts, mêmes partitions
+```
 
 ### Mixer des features (mlp, logistic, ridge)
 
