@@ -1,6 +1,0 @@
-# Only for historical scripts 00_download_dataset through 03_ppc_distance.
-datasets[audio]
-numpy
-pandas
-python-dotenv
-scipy
