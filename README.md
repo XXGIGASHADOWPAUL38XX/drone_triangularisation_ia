@@ -15,7 +15,7 @@ sans casser la méthodologie.
 02_ppc_classification/ détecteur (MLP, baselines)        -> output/<run>/ (modèle + métriques)
 03_ppc_distance/      distance (MLP gelé, baselines)  -> output/<run>/ (modèle + métriques)
 04_compare/            tableau de tous les runs         -> output/comparatif.csv
-05_export_release/     fige 2 runs -> bundle de release  -> output/<release>/ (contrat edth.model-release.v1)
+05_export_release/     fige 2 runs -> bundle de release  -> output/<release>/ (contrat edth.model-release.v2)
 ml.py                  bibliothèque partagée de 02 et 03 (modèles, métriques, expérience)
 run_server.sh          tout enchaîne sur la machine RTX
 tests/                 parité 24 kHz, fuite de groupes, smoke des modèles
@@ -77,9 +77,15 @@ python 03_ppc_distance/main.py --model constant && python 03_ppc_distance/main.p
 
 python 04_compare/main.py
 
-# figer les runs choisis en une release (contrat d'intégration ML V1, doc Outline B2)
+# figer les runs choisis en une release (contrat d'intégration v2, doc Outline B2)
 python 05_export_release/main.py --push     # bundle autovalidé + push vers HF_MODELS_REPO
 ```
+
+La release lit la fenêtre, la géométrie des bandes et la recette de recalcul
+des features dans le manifeste de l'étape 01 — les deux runs doivent partager
+le même cache. Seules les features LOCALES de fenêtre sont exportables : les
+descripteurs normalisés par prise (`handcrafted`, band descriptors) ne sont
+pas rejouables en temps réel et sont refusés.
 
 Sur la machine RTX : `bash run_server.sh` (deux modèles gelés + les trois
 baselines + tableau ; plus d'Optuna, quelques minutes au total).

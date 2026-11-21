@@ -200,10 +200,14 @@ def _window_analysis(pcm, rate, window_ms, include_b48, band_level_group=None, i
     return out, p
 
 
-def window_features(pcm, rate, *, window_ms=WINDOW_MS, include_b48=False, band_levels_only=False):
-    """Features d'une fenêtre valide calculées sans les autres fenêtres."""
-    return _window_analysis(pcm, rate, window_ms, include_b48,
-                            "band_levels" if band_levels_only else None)[0]
+def window_features(pcm, rate, *, window_ms=WINDOW_MS, include_b48=False,
+                     band_level_group=None, include_rms=False):
+    """Features locales d'une fenêtre valide, sans les autres fenêtres de la prise.
+
+    Les descripteurs normalisés par prise (handcrafted, band_descriptors) ne
+    sont PAS calculables ici : ils dépendent des autres fenêtres de la prise.
+    """
+    return _window_analysis(pcm, rate, window_ms, include_b48, band_level_group, include_rms)[0]
 
 
 def recording_features(windows, rate, *, window_ms=WINDOW_MS, include_b48=False,
