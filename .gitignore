@@ -5,3 +5,11 @@ __pycache__/
 .pytest_cache/
 /artifacts/
 /runs/
+00_download_dataset/output/
+01_ppc_features/input/
+01_ppc_features/output/
+02_ppc_classification/input/
+02_ppc_classification/output/
+03_ppc_distance/input/
+03_ppc_distance/output/
+04_compare/output/
