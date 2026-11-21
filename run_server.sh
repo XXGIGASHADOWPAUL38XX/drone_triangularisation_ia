@@ -6,8 +6,8 @@ PY=${PY:-.venv/bin/python}
 
 "$PY" -c 'import torch; assert torch.cuda.is_available(), "CUDA inaccessible : vérifier nvidia-smi et la wheel torch"'
 
-"$PY" 02_ppc_classification/main.py --model cnn      --device cuda
-"$PY" 02_ppc_classification/main.py --model logistic --relative --name logit
+"$PY" 02_ppc_classification/main.py --model mlp      --device cuda
+"$PY" 02_ppc_classification/main.py --model logistic --name logit
 "$PY" 03_ppc_distance/main.py      --model mlp      --device cuda
 "$PY" 03_ppc_distance/main.py      --model ridge    --name ridge
 "$PY" 03_ppc_distance/main.py      --model constant --name constant

@@ -1,10 +1,10 @@
 """Étape 1 : WAV maîtres -> fenêtres valides + features + splits groupés.
 
-  python main.py --rate 24000        (défaut ; 16000 et 48000 supportés)
+  python main.py --rate 24000 --window-ms 250 --stride-ms 125
 
 Entrée  input/data/samples/           (posée par l'étape 00)
-Sortie  output/windows-<rate>.parquet : une ligne par fenêtre valide ;
-        output/manifest-<rate>.json   : provenance, FIR, prise par prise ;
+Sortie  output/windows-<rate>-bands200-avg4-descriptors.parquet par défaut,
+        un manifeste JSON et les partitions groupées.
         output/splits.json            : partitions (groupées) — réutilisé tel
         quel s'il est présent dans input/, donc IDENTIQUE pour tous les taux.
 La sortie est copiée vers l'entrée des étapes 02 et 03.
@@ -13,6 +13,7 @@ import argparse
 import csv
 import hashlib
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from shutil import copyfile
@@ -20,11 +21,16 @@ from shutil import copyfile
 import numpy as np
 import pandas as pd
 
-from dsp import FLAT_COLS, LOGMEL, N_BANDS, antialias_fir, iter_windows, n_frames, read_wav48, window_features
+from dsp import (BAND_DESCRIPTOR_GROUP, BAND_LEVEL_LAYOUTS, DEFAULT_BAND_GROUP, FFT, FLAT_COLS, HOP, LOGFFT,
+                 N_BINS, RATES, STRIDE_MS, WINDOW_MS, antialias_fir, iter_windows,
+                 n_frames, read_wav48, recording_features, resolve_features, stride_samples)
+from features import BAND_DESCRIPTOR_NAMES, HANDCRAFTED_COLS
 
 STAGE = Path(__file__).resolve().parent
 INPUT, OUTPUT = STAGE / "input", STAGE / "output"
 SEED = 143  # partitions historiques : ne pas changer sans motif
+SPLIT_CANDIDATES = 8192
+PARTITIONS = ("train", "validation", "test")
 
 
 def entries(root):
@@ -54,14 +60,13 @@ def events(rows):
 
 
 def assign_splits(rows, seed=SEED):
-    """Test + trois plis dev équilibrés sur les métadonnées (classes, distances,
-    appareils). Échoue explicitement plutôt que de retomber sur du aléatoire."""
+    """Répartit les groupes entre entraînement, validation et test."""
     live = [r for r in rows if r["valid_windows"]]
     groups = sorted({r["group_id"] for r in live})
     devices = sorted({r["device_id"] for r in live})
     dists = sorted({r["distance_m"] for r in live if r["drone_present"] and 1 <= r["distance_m"] <= 5})
     if len(groups) < 4 or len(dists) < 2:
-        raise ValueError("trop peu de groupes ou de distances pour 3 plis + holdout")
+        raise ValueError("trop peu de groupes ou de distances pour train/validation/test")
     x = np.zeros((len(groups), 3 + len(dists) + len(devices)))
     for r in live:
         g = x[groups.index(r["group_id"])]
@@ -72,26 +77,28 @@ def assign_splits(rows, seed=SEED):
             g[2] += 1
             g[3 + dists.index(r["distance_m"])] += 1
         g[3 + len(dists) + devices.index(r["device_id"])] += 1
-    rng, target = np.random.default_rng(seed), x.sum(axis=0) / 4
-    best, chosen = np.inf, None
-    for _ in range(8192):
-        labels = rng.permutation(np.arange(len(groups)) % 4)
-        counts = np.stack([x[labels == k].sum(axis=0) for k in range(4)])
-        if np.any(counts[:, 1:3] < 1) or np.any((counts[:, 3:3 + len(dists)] > 0).sum(axis=1) < 2):
-            continue
-        score = (((counts - target) / np.maximum(target, 1)) ** 2).sum()
-        if score < best:
-            best, chosen = score, labels
-    if chosen is None:
+    held_out = len(groups) // 4
+    sizes = np.array([len(groups) - 2 * held_out, held_out, held_out])
+    target = (sizes / len(groups))[:, None] * x.sum(axis=0)
+    rng = np.random.default_rng(seed)
+    balanced = np.broadcast_to(np.repeat(np.arange(len(PARTITIONS)), sizes), (SPLIT_CANDIDATES, len(groups)))
+    candidates = rng.permuted(balanced, axis=1)
+    # Axes : candidat, partition, groupe. La multiplication totalise les métadonnées par partition.
+    counts = (candidates[:, None, :] == np.arange(len(PARTITIONS))[None, :, None]) @ x
+    has_classes = (counts[:, :, 1:3] >= 1).all(axis=(1, 2))
+    has_distances = ((counts[:, :, 3:3 + len(dists)] > 0).sum(axis=2) >= 2).all(axis=1)
+    scores = (((counts - target) / np.maximum(target, 1)) ** 2).sum(axis=(1, 2))
+    scores[~(has_classes & has_distances)] = np.inf
+    best = scores.argmin()
+    if not np.isfinite(scores[best]):
         raise ValueError("aucune partition groupée ne couvre classes et distances partout")
-    lookup = dict(zip(groups, chosen.tolist()))
+    lookup = {group: PARTITIONS[bucket] for group, bucket in zip(groups, candidates[best])}
     for r in rows:
-        bucket = lookup.get(r["group_id"])
-        r["split"] = "excluded" if bucket is None else "test" if bucket == 0 else "dev"
-        r["fold"] = bucket - 1 if bucket else -1
+        r["split"] = lookup.get(r["group_id"], "excluded")
 
 
-def build_rows(root, rate):
+def build_rows(root, rate, *, window_ms=WINDOW_MS, stride_ms=STRIDE_MS, include_b48=False,
+               band_level_group=None, include_descriptors=False, include_band_descriptors=False):
     """Valide les métadonnées, lit les WAV stricts, calcule les fenêtres."""
     rows, frames, seen = [], [], set()
     for m, path in entries(root):
@@ -116,7 +123,10 @@ def build_rows(root, rate):
         pcm = read_wav48(path)
         r["duration_s"] = len(pcm) / 48000
         r["pcm_sha256"] = hashlib.sha256(pcm.tobytes()).hexdigest()
-        wins = [{"start_sample": i, **window_features(w, rate)} for i, w in iter_windows(pcm, rate)]
+        windows = iter_windows(pcm, rate, window_ms=window_ms, stride_ms=stride_ms)
+        wins = recording_features(windows, rate, window_ms=window_ms, include_b48=include_b48,
+                                  band_level_group=band_level_group, include_descriptors=include_descriptors,
+                                  include_band_descriptors=include_band_descriptors)
         r["valid_windows"] = len(wins)
         if wins:
             frames.append(pd.DataFrame(wins).assign(sample_id=sid))
@@ -131,47 +141,122 @@ def build_rows(root, rate):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data", type=Path, default=INPUT / "data")
-    p.add_argument("--rate", type=int, choices=(16000, 24000, 48000), default=24000)
+    p.add_argument("--rate", type=int, choices=RATES, default=24000)
+    p.add_argument("--window-ms", type=int, default=WINDOW_MS, help="durée d'une fenêtre en ms")
+    p.add_argument("--stride-ms", type=float, default=STRIDE_MS, help="pas entre fenêtres en ms")
+    p.add_argument("--cache-tag", help="suffixe du cache pour conserver plusieurs essais")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--full-spectrum", action="store_true", help="écrire le cache FFT complet historique")
+    mode.add_argument("--include-b48", action="store_true", help="ajouter la puissance 4–8 kHz dans un cache séparé")
+    mode.add_argument("--band-levels", dest="band_level_group", action="store_const", const="band_levels",
+                      help="écrire uniquement les niveaux des 100 bandes FFT")
+    mode.add_argument("--band-levels-avg3", dest="band_level_group", action="store_const",
+                      const="band_levels_avg3", help="moyenner les niveaux de 200 bandes FFT par groupes de trois")
+    mode.add_argument("--band-levels-avg4", dest="band_level_group", action="store_const",
+                      const="band_levels_avg4", help="moyenner les niveaux de 200 bandes FFT par groupes de quatre")
+    mode.add_argument("--band-levels-avg5", dest="band_level_group", action="store_const",
+                      const="band_levels_avg5", help="moyenner les niveaux de 200 bandes FFT par groupes de cinq")
+    mode.add_argument("--band-levels-avg6", dest="band_level_group", action="store_const",
+                      const="band_levels_avg6", help="moyenner les niveaux de 300 bandes FFT par groupes de six")
+    descriptors = p.add_mutually_exclusive_group()
+    descriptors.add_argument("--with-descriptors", action="store_true",
+                             help="ajouter le RMS et les six descripteurs globaux")
+    descriptors.add_argument("--with-band-descriptors", action="store_true",
+                             help="ajouter quatre descripteurs spectraux par bande du mode avg4")
     a = p.parse_args()
-    rows, frames = build_rows(a.data, a.rate)
+    if a.cache_tag and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", a.cache_tag):
+        p.error("--cache-tag doit contenir uniquement des lettres, chiffres, tirets ou underscores")
+    if not (a.band_level_group or a.full_spectrum or a.include_b48):
+        a.band_level_group = DEFAULT_BAND_GROUP
+        a.with_descriptors = not a.with_band_descriptors
+    if a.with_descriptors and not a.band_level_group:
+        p.error("--with-descriptors nécessite un mode --band-levels")
+    if a.with_band_descriptors and a.band_level_group != DEFAULT_BAND_GROUP:
+        p.error("--with-band-descriptors nécessite le mode --band-levels-avg4")
+    try:
+        frame_count = n_frames(a.rate, a.window_ms)
+        step_samples = stride_samples(a.rate, a.stride_ms)
+    except ValueError as exc:
+        p.error(str(exc))
+    rows, frames = build_rows(a.data, a.rate, window_ms=a.window_ms, stride_ms=a.stride_ms,
+                              include_b48=a.include_b48, band_level_group=a.band_level_group,
+                              include_descriptors=a.with_descriptors,
+                              include_band_descriptors=a.with_band_descriptors)
     splits_path = INPUT / "splits.json"
     if splits_path.is_file():
         table = json.loads(splits_path.read_text())
         if any(sid not in {r["sample_id"] for r in rows} for sid in table):
             raise ValueError("input/splits.json référence des prises absentes du corpus")
+        for entry in table.values():
+            if entry["split"] == "dev":
+                entry["split"] = "validation" if entry["fold"] == 0 else "train"
+            entry.pop("fold", None)
         print(f"partitions réutilisées : {splits_path}")
     else:
         assign_splits(rows)
-        table = {r["sample_id"]: dict(group_id=r["group_id"], split=r["split"], fold=r["fold"])
+        table = {r["sample_id"]: dict(group_id=r["group_id"], split=r["split"])
                  for r in rows if r["valid_windows"]}
-        (OUTPUT / "splits.json").parent.mkdir(parents=True, exist_ok=True)
-        (OUTPUT / "splits.json").write_text(json.dumps(table, indent=2) + "\n")
         print(f"partitions créées : {OUTPUT / 'splits.json'}")
     for r in rows:
         info = table.get(r["sample_id"])
         if info is None:
-            r.update(group_id=None, split="excluded", fold=-1)
+            r.update(group_id=None, split="excluded")
         else:
-            r.update(group_id=info["group_id"], split=info["split"], fold=info["fold"])
-    keys = ["sample_id", "device_id", "group_id", "split", "fold", "drone_present", "distance_m"]
+            r.update(group_id=info["group_id"], split=info["split"])
+    keys = ["sample_id", "device_id", "group_id", "split", "drone_present", "distance_m"]
     meta = pd.DataFrame(rows)[keys]
+    band_cols = resolve_features(a.band_level_group) if a.band_level_group else []
+    if a.band_level_group:
+        feature_cols = list(band_cols)
+        count, average = BAND_LEVEL_LAYOUTS[a.band_level_group]
+        tag = f"{a.rate}-bands{count}"
+        if average > 1:
+            tag += f"-avg{average}"
+        if a.with_descriptors:
+            feature_cols = [*resolve_features("rms,handcrafted"), *band_cols]
+            tag += "-descriptors"
+        if a.with_band_descriptors:
+            feature_cols += resolve_features(BAND_DESCRIPTOR_GROUP)
+            tag += "-band-descriptors"
+    else:
+        feature_cols = list(FLAT_COLS)
+        if a.include_b48:
+            feature_cols += resolve_features("b48")
+        feature_cols.append(LOGFFT)
+        tag = f"{a.rate}-b48" if a.include_b48 else str(a.rate)
     windows = (pd.concat(frames, ignore_index=True).merge(meta, on="sample_id", validate="many_to_one")
-               .sort_values(["sample_id", "start_sample"])[keys + ["start_sample", *FLAT_COLS, LOGMEL]])
+               .sort_values(["sample_id", "start_sample"])[keys + ["start_sample", *feature_cols]])
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    parquet = OUTPUT / f"windows-{a.rate}.parquet"
+    if a.cache_tag:
+        tag += "-" + a.cache_tag
+    parquet = OUTPUT / f"windows-{tag}.parquet"
     windows.to_parquet(parquet, index=False)
+    (OUTPUT / "splits.json").write_text(json.dumps(table, indent=2) + "\n")
     fir = antialias_fir(a.rate)
-    manifest = dict(rate=a.rate, source=str(a.data.resolve()), seed=SEED,
+    manifest = dict(rate=a.rate, window_ms=a.window_ms, stride_ms=a.stride_ms,
+                    stride_samples=step_samples, source=str(a.data.resolve()), seed=SEED,
                     fir=None if fir is None else dict(taps=len(fir), cutoff_hz=11000 if a.rate == 24000 else 7333),
-                    logmel=dict(mels=N_BANDS, frames=n_frames(a.rate), fft=2048, hop=1024,
-                                layout=f"mel-major : indice = mel * {n_frames(a.rate)} + trame"),
                     takes=sorted(rows, key=lambda r: r["sample_id"]))
-    (OUTPUT / f"manifest-{a.rate}.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    if a.band_level_group:
+        manifest["band_levels"] = dict(count=len(band_cols), source_bands=count, average=average,
+                                       bandwidth_hz=a.rate * average / (2 * count), scale="dBFS")
+        if count % average:
+            manifest["band_levels"]["last_bandwidth_hz"] = a.rate * (count % average) / (2 * count)
+    if a.with_descriptors:
+        manifest.update(handcrafted=HANDCRAFTED_COLS, rms=True)
+    if a.with_band_descriptors:
+        manifest["per_band_descriptors"] = BAND_DESCRIPTOR_NAMES
+    if not a.band_level_group:
+        manifest.update(logfft=dict(bins=N_BINS, frames=frame_count, fft=FFT, hop=HOP,
+                                    layout=f"indice = bin * {frame_count} + trame"),
+                        handcrafted=HANDCRAFTED_COLS, include_b48=a.include_b48)
+    manifest_path = OUTPUT / f"manifest-{tag}.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     print(windows.groupby(["split", "drone_present"]).agg(fenetres=("sample_id", "size"),
                                                          prises=("sample_id", "nunique")))
     for stage in ("02_ppc_classification", "03_ppc_distance"):
         (STAGE.parent / stage / "input").mkdir(parents=True, exist_ok=True)
-        for name in (parquet.name, f"manifest-{a.rate}.json", "splits.json"):
+        for name in (parquet.name, manifest_path.name, "splits.json"):
             if (OUTPUT / name).is_file():
                 copyfile(OUTPUT / name, STAGE.parent / stage / "input" / name)
     splits_path.parent.mkdir(parents=True, exist_ok=True)

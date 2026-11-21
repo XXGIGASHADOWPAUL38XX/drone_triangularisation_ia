@@ -11,8 +11,8 @@ sans casser la méthodologie.
 
 ```
 00_download_dataset/   corpus (local ou HF privé)      -> output/data/ (samples/ ou data/)
-01_ppc_features/       fenêtres + features + splits     -> output/windows-<rate>.parquet
-02_ppc_classification/ détecteur (CNN gelé, baselines)  -> output/<run>/ (modèle + métriques)
+01_ppc_features/       fenêtres + 57 features + splits  -> output/windows-<rate>-bands200-avg4-descriptors.parquet
+02_ppc_classification/ détecteur (MLP, baselines)        -> output/<run>/ (modèle + métriques)
 03_ppc_distance/      distance (MLP gelé, baselines)  -> output/<run>/ (modèle + métriques)
 04_compare/            tableau de tous les runs         -> output/comparatif.csv
 ml.py                  bibliothèque partagée de 02 et 03 (modèles, métriques, expérience)
@@ -26,23 +26,25 @@ le contenu de `input/` et `output/` n'est pas versionné (ce sont des données).
 ```
 WAV maîtres (mono PCM16 48 kHz)
    │  00  (corpus local ou HF privé)
-   ▼ 01_ppc_features/input/data ──> 01 ──> output/windows-<rate>.parquet + splits.json
-   │        (FIR anti-repliement, contrôle qualité, fenêtres 1 s / pas 250 ms)
+   ▼ 01_ppc_features/input/data ──> 01 ──> parquet de features + splits.json
+   │        (FIR anti-repliement, contrôle qualité, fenêtres 250 ms / pas 125 ms)
    ▼ copié automatiquement vers 02/input et 03/input
-02 / 03 : CV groupée sur dev (3 plis) ──> réajustement final ──> UNE lecture du holdout
+02 / 03 : entraînement unique par groupes ──> validation ──> holdout
    ▼
-output/<run>/ : model.joblib, metrics.json, config.json, cv.csv, curves.json, courbes
+output/<run>/ : model.joblib, metrics.json, config.json, curves.json, courbes
    │  04_compare
    ▼
 04_compare/output/comparatif.csv
 ```
 
-## Ce qui est gelé d'après l'HPO préliminaire
+## Modèles et entrées
 
-| Tâche | Modèle retenu | Entrée | Dev (CV groupée) | Holdout |
+| Tâche | Modèle | Entrée actuelle | Dev historique | Holdout historique |
 |---|---|---|---|---|
-| Détection | **CNN 2D** : 1 bloc conv 32 canaux, dropout 0.15, ~450 paramètres | log-mel 32×22 **relative**, sans one-hot téléphone | 97,5 % balanced acc. | 96,2 % |
-| Distance | **MLP** : 16 cachées, dropout 0.15, ~577 paramètres, sortie [1, 5] m | 34 niveaux **absolus** (32 bandes mel + 4–8 kHz + RMS), sans one-hot | MAE 0,43 m | 0,46 m |
+| Détection | **MLP**, 16 unités cachées | 50 niveaux de bandes, RMS et six descripteurs | 97,5 % balanced acc. (CNN) | 96,2 % (CNN) |
+| Distance | **MLP**, 16 unités cachées, sortie [1, 5] m | Les mêmes 57 features | MAE 0,43 m | 0,46 m |
+
+Les scores historiques correspondent aux anciennes entrées. Régénérer les parquets à l'étape 01 et réentraîner les modèles pour évaluer les entrées FFT.
 
 Baselines à refaire à côté : logistique relative (90,8 % holdout), ridge
 (~0,59 m), constant 3 m (1,09 m). Rejetés par l'HPO : one-hot téléphone,
@@ -58,18 +60,18 @@ Python 3.12 ; PyTorch s'installe à part (index CPU ou CUDA) :
 python3.12 -m venv .venv && source .venv/bin/activate
 python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.8.0
 python -m pip install -r requirements.txt
-python -m pytest -q     # 17 tests, dont la parité 24 kHz contre le cache historique
+python -m pytest -q
 ```
 
 ```sh
 python 00_download_dataset/main.py --local /home/noe/Projects/EDTH_data-collector/data
 # ou : python 00_download_dataset/main.py --repo ImAPancake/EDTH_drone_distance_raw --revision <sha>
 
-python 01_ppc_features/main.py --rate 24000        # défaut ; 16000 et 48000 supportés
+python 01_ppc_features/main.py --rate 24000 --window-ms 250 --stride-ms 125
 
-python 02_ppc_classification/main.py               # CNN gelé -> output/cnn-24k/
-python 02_ppc_classification/main.py --model logistic --relative --name logit
-python 03_ppc_distance/main.py                    # MLP gelé -> output/mlp-24k/
+python 02_ppc_classification/main.py
+python 02_ppc_classification/main.py --model logistic --name logit
+python 03_ppc_distance/main.py
 python 03_ppc_distance/main.py --model constant && python 03_ppc_distance/main.py --model ridge
 
 python 04_compare/main.py
@@ -83,41 +85,77 @@ baselines + tableau ; plus d'Optuna, quelques minutes au total).
 Principe : **une expérience = une commande 02 ou 03 = un dossier
 `output/<nom>`**, avec ses features et ses hyperparamètres enregistrés dans
 `config.json` et visibles dans le tableau de 04. On choisit entre
-expériences sur la colonne `dev_cv` — jamais sur le holdout.
+expériences sur la colonne `validation`. La colonne `dev_cv` correspond aux runs historiques.
 
 ### Sample rate
 
 Les features dépendent du taux, **pas les splits** : `splits.json` est écrit
 une fois puis réutilisé (l'étape 01 le recopie dans son propre `input/`),
-donc tous les taux comparent sur les mêmes prises et les mêmes plis.
+donc tous les taux comparent les mêmes partitions d'entraînement, de validation et de test.
+Les anciens splits gardent leur holdout et réutilisent le pli 0 comme validation.
+Les options `--window-ms` et `--stride-ms` règlent la durée et le pas en millisecondes.
+Le pas accepte des valeurs fractionnaires, par exemple `--stride-ms 62.5`.
+La fenêtre doit contenir au moins les 2 048 échantillons d'une trame FFT.
+Pour conserver plusieurs caches à un même taux, donner un suffixe avec
+`--cache-tag`, par exemple `--cache-tag w100-s50`.
 
 ```sh
 python 01_ppc_features/main.py --rate 16000        # idem --rate 48000
 # puis, pour tester ce taux (depuis la racine) :
-python 02_ppc_classification/main.py --input 02_ppc_classification/input/windows-16000.parquet --name cnn-16k
-python 03_ppc_distance/main.py      --input 03_ppc_distance/input/windows-16000.parquet --name mlp-16k
+python 02_ppc_classification/main.py --input 02_ppc_classification/input/windows-16000-bands200-avg4-descriptors.parquet --name mlp-16k
+python 03_ppc_distance/main.py      --input 03_ppc_distance/input/windows-16000-bands200-avg4-descriptors.parquet --name mlp-16k
 python 04_compare/main.py
 ```
 
-Questions : 24 kHz perd-il quelque chose face à 48 ? 16 kHz (Nyquist 8 kHz)
-rogne-t-il la bande utile 4–8 kHz et casse-t-il la distance ?
+Les expériences comparent notamment l'effet de la fréquence maximale observable
+sur la détection et l'estimation de distance.
 
 ### Mixer des features (mlp, logistic, ridge)
 
 | Groupe | Colonnes | Ce que teste l'expérience |
 |---|---|---|
-| `mel` | les 32 bandes mel | le spectre complet |
-| `b48` | seulement 4–8 kHz | l'hypothèse « bande du drone » seule |
+| `band_levels_avg4` | 50 niveaux de bandes en dBFS | le spectre regroupé |
 | `rms` | seulement le niveau global | le niveau absolu, sans spectre |
-| *(vide)* | les 34 colonnes | l'entrée gelée du MLP distance |
+| `handcrafted` | six descripteurs de la fenêtre entière | la forme d'onde et le spectre |
+| *(vide)* | les 57 colonnes | les trois groupes ci-dessus |
+
+Les descripteurs sont normalisés par prise. L'entropie, le centroïde, le flux
+et l'onset utilisent le spectre entier. Le taux de
+passage par zéro et le facteur de crête utilisent la forme d'onde.
 
 ```sh
-python 03_ppc_distance/main.py --model mlp --features b48 --name mlp-b48
 python 03_ppc_distance/main.py --model mlp --features rms --name mlp-rms
-python 02_ppc_classification/main.py --model mlp --features mel,b48 --name mlp-mel-b48
+python 03_ppc_distance/main.py --model mlp --features handcrafted --name mlp-handcrafted
+python 02_ppc_classification/main.py --model mlp --features band_levels_avg4,rms --name mlp-bands-rms
 ```
 
-Le CNN n'a pas d'option features : il est gelé sur le log-mel complet.
+L'option `--full-spectrum` de l'étape 01 régénère le cache FFT des anciens
+essais. Le modèle `--model cnn` utilise la colonne `logfft` de ce cache.
+
+Pour tester la puissance 4–8 kHz, lancer l'étape 01 avec `--include-b48` puis
+sélectionner `windows-<rate>-b48.parquet` avec `--input` et ajouter `b48`
+à `--features`.
+
+Pour entraîner sur les 100 niveaux de bandes FFT, lancer l'étape 01 avec
+`--band-levels`. Sélectionner `windows-<rate>-bands100.parquet` avec `--input`
+et utiliser `--features band_levels` avec `--model mlp` pour la classification.
+
+`--band-levels-avg3` calcule 200 niveaux en dBFS et produit 67 features avec
+`--features band_levels_avg3`. Les deux dernières bandes forment le dernier groupe.
+
+`--band-levels-avg4` calcule 200 niveaux en dBFS et moyenne chaque groupe de
+quatre bandes voisines. Le cache `windows-<rate>-bands200-avg4.parquet` contient
+les 50 features sélectionnées avec `--features band_levels_avg4`.
+Ajouter `--with-descriptors` produit le cache par défaut avec les 57 features.
+`--with-band-descriptors` ajoute plutôt l'entropie, le centroïde, le flux et
+l'onset de chaque bande avg4. Sélectionner `band_levels_avg4,band_descriptors_avg4`
+pour entraîner sur les 250 features de ce cache.
+`--band-levels-avg5` moyenne les niveaux par groupes de cinq et produit 40
+features sélectionnées avec `--features band_levels_avg5` dans
+`windows-<rate>-bands200-avg5.parquet`.
+`--band-levels-avg6` moyenne 300 bandes par groupes de six et produit 50
+features sélectionnées avec `--features band_levels_avg6` dans
+`windows-<rate>-bands300-avg6.parquet`.
 
 ### Niveau relatif vs absolu
 
@@ -131,31 +169,30 @@ ABSOLUS sont la convention : `--relative` y est contre-indiqué.
 `--lr` et `--dropout` surchargent les valeurs gelées ; c'est un choix
 délibéré, visible dans `config.json` et dans le tableau de 04.
 
-### La règle d'or
+### Validation et test
 
-Le holdout n'est lu qu'à la fin d'un run 02/03, **une seule fois par
-question**, après avoir choisi sur `dev_cv`. Chaque variante supplémentaire
-évaluée sur le holdout l'affaiblit. Les 9 748 fenêtres se chevauchent : ce
-ne sont pas 9 748 observations indépendantes.
+La validation choisit le point d'arrêt et le holdout mesure le modèle final.
+Le classement s'appuie sur la validation. Le chevauchement rend les fenêtres
+d'une même prise dépendantes.
 
 ## Sorties d'un run (`02/output/<nom>/` ou `03/output/<nom>/`)
 
 - `model.joblib` — modèle + scaler + colonnes, rechargeable (joblib) ;
-- `metrics.json` — dev_cv, holdout (overall, par téléphone, par distance
+- `metrics.json` — validation, holdout (overall, par téléphone, par distance
   cible), MAE non bornée pour la distance ;
 - `config.json` — modèle, features, hyperparamètres, taux, empreintes ;
-- `cv.csv`, `curves.json`, `learning-curves.png` — plis et apprentissage.
+- `curves.json`, `learning-curves.png` — apprentissage et arrêt anticipé.
 
 ## Méthodologie (à ne pas casser)
 
 Mêmes règles que la spécification ML V1 du hackathon : répartition par
-**événement temporel avant fenêtrage** (un groupe ne traverse jamais
-dev/test), **poids égal par prise**, scaler ajusté sur le train du pli
-uniquement, fenêtres valides de 1 s / pas 250 ms après contrôle qualité
+**événement temporel** (chaque groupe appartient à une partition),
+**poids égal par prise**, scaler ajusté sur les données d'entraînement
+uniquement, fenêtres valides de 250 ms / pas 125 ms par défaut après contrôle qualité
 (suites de zéros ≥ 40 ms, garde 500 ms), niveaux **absolus** en dBFS pour la
-distance. La parité 24 kHz avec le cache qui a servi au run RTX est testée
-automatiquement à chaque `pytest` (régénération complète, comparaison
-bit-à-bit des 9 748 fenêtres et des splits).
+distance. Avec le cache historique disponible, les tests comparent les fenêtres,
+les partitions et le niveau RMS à 24 kHz avec les anciens réglages
+de 1 000 ms et 250 ms.
 
 Limites à dire telles quelles devant le jury : même campagne, mêmes trois
 appareils, une seule prise à 5 m par téléphone ; ni précision 2D, ni latence

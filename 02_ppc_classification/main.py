@@ -1,14 +1,14 @@
 """Étape 2 : entraîner et évaluer le détecteur présent/absent.
 
-  python main.py                                        # CNN gelé (valeur HPO)
-  python main.py --model logistic --relative --name logit
-  python main.py --model mlp --features b48 --name mlp-b48
+  python main.py                                        # MLP sur les 57 features
+  python main.py --model logistic --name logit
+  python main.py --model mlp --features handcrafted --name mlp-handcrafted
 
-Entrée  input/windows-<rate>.parquet  (posé par l'étape 01)
-Sortie  output/<nom>/ : model.joblib, metrics.json (dev + holdout), config.json,
-        cv.csv, curves.json, learning-curves.png
-La sélection se fait sur les plis de développement ; le holdout n'est lu qu'à
-la fin, une seule fois. Modèles : cnn (gelé, log-mel relative), mlp,
+Entrée  input/windows-<rate>-bands200-avg4-descriptors.parquet
+Sortie  output/<nom>/ : model.joblib, metrics.json (validation + holdout), config.json,
+        curves.json, learning-curves.png
+Entraînement unique avec arrêt anticipé sur la validation et évaluation
+finale sur le holdout. Modèles : cnn (spectre FFT relatif en dB), mlp,
 logistic.
 """
 import argparse
@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))                       # ml.py
 sys.path.insert(0, str(ROOT / "01_ppc_features"))   # dsp.py : registre des features
-from dsp import resolve_features
+from dsp import DEFAULT_FEATURES, FEATURE_SETS, default_window_cache, resolve_features
 
 import ml
 
@@ -28,28 +28,28 @@ INPUT, OUTPUT = STAGE / "input", STAGE / "output"
 
 
 def main():
-    default = INPUT / "windows-24000.parquet"
-    if not default.is_file():
-        candidates = sorted(INPUT.glob("windows-*.parquet"))
-        default = candidates[0] if candidates else default
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model", choices=["cnn", "mlp", "logistic"], default="cnn")
-    p.add_argument("--input", type=Path, default=default)
-    p.add_argument("--features", default="mel,b48,rms", help="groupes plates : mel, b48, rms (cnn ignore)")
+    p.add_argument("--model", choices=["cnn", "mlp", "logistic"], default="mlp")
+    p.add_argument("--input", type=Path)
+    p.add_argument("--features", default=DEFAULT_FEATURES,
+                   help=f"groupes : {', '.join(FEATURE_SETS)} (cnn ignore)")
     p.add_argument("--relative", action="store_true", help="retirer le niveau global de la fenêtre")
-    p.add_argument("--name", help="nom du run (défaut : <modèle>-<taux>k)")
+    p.add_argument("--name", help="nom du run, dérivé du modèle et du cache par défaut")
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
-    p.add_argument("--epochs", type=int, default=60)
-    p.add_argument("--patience", type=int, default=8)
+    p.add_argument("--epochs", type=int, default=12)
+    p.add_argument("--patience", type=int, default=4)
     p.add_argument("--lr", type=float, default=None, help="défaut : valeur gelée de l'HPO")
     p.add_argument("--dropout", type=float, default=None)
     p.add_argument("--seed", type=int, default=42)
     a = p.parse_args()
+    if a.input is None:
+        a.input = default_window_cache(INPUT, full_spectrum=a.model == "cnn")
     if not a.input.is_file():
         raise SystemExit(f"cache introuvable : {a.input} (relancer l'étape 01)")
-    a.rate = int(m.group(1)) if (m := re.search(r"(\d+)", a.input.stem)) else None
+    m = re.search(r"(\d+)(.*)$", a.input.stem)
+    a.rate = int(m.group(1)) if m else None
     if a.name is None:
-        a.name = f"{a.model}-{a.rate // 1000}k" if a.rate else a.model
+        a.name = f"{a.model}-{a.rate // 1000}k{m.group(2)}" if m else a.model
     a.out = OUTPUT
     a.resolve_features = resolve_features  # le registre des groupes vit dans l'étape 01
     if a.device == "cuda":

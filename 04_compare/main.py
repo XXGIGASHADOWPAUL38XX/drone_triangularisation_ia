@@ -2,9 +2,8 @@
 
   python main.py            # lit 02/output et 03/output, écrit output/comparatif.csv
 
-Chaque ligne = un run (une expérience). La colonne dev_cv sert à CHOISIR ;
-la colonne test ne fait que confirmer un choix déjà fait sur le dev, elle ne
-sert pas à en tester de nouveaux.
+Chaque ligne représente un run. La colonne validation sert à choisir le modèle.
+Les scores des anciens runs en validation croisée sont affichés séparément.
 """
 import argparse
 import json
@@ -25,9 +24,11 @@ def collect(steps):
             run = config_path.parent
             config = json.loads(config_path.read_text())
             metric = "balanced_accuracy" if config["task"] == "classification" else "mae_m"
+            protocol = "validation" if "validation" in config else "dev_cv"
             row = dict(run=run.name, task=config["task"], model=config["model"],
                        features=config["features"], rate=config.get("rate"),
-                       relative=config.get("relative"), dev_cv=config["dev_cv"][metric])
+                       relative=config.get("relative"), protocol=protocol)
+            row[protocol] = config[protocol][metric]
             metrics_path = run / "metrics.json"
             if metrics_path.is_file():
                 row[TEST_KEY[config["task"]]] = json.loads(metrics_path.read_text())["test"]["overall"][metric]
@@ -43,8 +44,10 @@ def main():
     if table.empty:
         raise SystemExit("aucun run trouvé : lancer les étapes 02 et 03 d'abord.")
     # détection : plus haut = mieux ; distance : plus bas = mieux
-    table = (table.assign(_sort=lambda t: t.dev_cv.where(t.task == "distance", -t.dev_cv))
-                  .sort_values(["task", "_sort"]).drop(columns="_sort"))
+    score = table.get("validation", pd.Series(index=table.index, dtype=float)).fillna(
+        table.get("dev_cv", pd.Series(index=table.index, dtype=float)))
+    table = (table.assign(_sort=score.where(table.task == "distance", -score))
+                  .sort_values(["task", "protocol", "_sort"]).drop(columns="_sort"))
     print(table.to_string(index=False))
     OUTPUT.mkdir(parents=True, exist_ok=True)
     table.to_csv(OUTPUT / "comparatif.csv", index=False)
