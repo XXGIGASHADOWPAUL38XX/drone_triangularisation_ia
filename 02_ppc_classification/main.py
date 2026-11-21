@@ -8,7 +8,10 @@ OUTPUT = STAGE / "output/classification.pkl"
 
 
 def preprocess(df):
-    return df.assign(drone_present=df["distance_m"].notna().astype("int8"))
+    drone_present = df["distance_m"].notna().astype("int8")
+    return df.drop(
+        columns=["audio", "fft", "sample_rate", "sample_id", "distance_m"], errors="ignore"
+    ).assign(drone_present=drone_present)
 
 
 def main():

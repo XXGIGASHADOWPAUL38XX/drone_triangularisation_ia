@@ -3,7 +3,6 @@
 Pass (frames, bins) for a single band or (bands, frames, bins) for stacked
 bands. Channel data adds a final axis. Use split=False for a single
 multichannel band, since its three axes overlap with stacked mono input.
-Mid/side energy always expects stereo and infers the band axis accordingly.
 The list returned by get_multibands also supports unequal band widths.
 """
 
@@ -53,9 +52,9 @@ def normalize(data, axis, power=1.0):
     return norm(np.sign(data) * np.abs(data) ** power)
 
 
-def _as_bands(amplitudes, split, *, single_band_ndim=2):
+def _as_bands(amplitudes, split):
     if split is None:
-        split = isinstance(amplitudes, (list, tuple)) or np.ndim(amplitudes) > single_band_ndim
+        split = isinstance(amplitudes, (list, tuple)) or np.ndim(amplitudes) > 2
     return amplitudes if split else (amplitudes,), split
 
 
@@ -76,10 +75,13 @@ def get_abs_amp_max(abs_amplitudes, power=1.0, *, split=None):
     )
 
 
-def get_abs_amp_nonzero_count(abs_amplitudes, power=1.0, *, split=None):
-    return _apply_to_bands(
-        abs_amplitudes, lambda band: np.count_nonzero(band, axis=1), power, split
-    )
+def get_abs_amp_nonzero_count(abs_amplitudes, power=1.0, *, split=None, threshold=None):
+    """Count bins per frame, optionally above a scalar or per-frame threshold."""
+    def count(band):
+        active = band if threshold is None else band > threshold
+        return np.count_nonzero(active, axis=1)
+
+    return _apply_to_bands(abs_amplitudes, count, power, split)
 
 
 def get_abs_amp_avg_frequency(abs_amplitudes, frequencies, power=1.0, *, split=None):
@@ -159,29 +161,6 @@ def get_mb_zcr(amplitudes, power=1.0, *, split=None):
         return np.count_nonzero(changes, axis=1) / max(band.shape[1] - 1, 1)
 
     return _apply_to_bands(amplitudes, zcr, power, split)
-
-
-def get_mb_mid_side_e(amplitudes, power=1.0, frames_per_group=1, *, split=None):
-    """Calculate normalized mean mid/side energy from stereo data."""
-    if frames_per_group < 1:
-        raise ValueError("frames_per_group must be positive")
-
-    def mid_side_energy(band):
-        band = np.asarray(band)
-        if band.ndim != 3 or band.shape[-1] != 2:
-            raise ValueError("Mid/side energy requires stereo bands shaped (frames, bins, 2)")
-        mid = (band[..., 0] + band[..., 1]) * 0.5
-        side = (band[..., 0] - band[..., 1]) * 0.5
-        energy = np.stack([
-            (np.abs(mid) ** 2).sum(axis=1),
-            (np.abs(side) ** 2).sum(axis=1),
-        ], axis=-1) / max(band.shape[1], 1)
-        energy = energy.mean(axis=-1)
-        energy = np.pad(energy, (0, (-energy.size) % frames_per_group))
-        return energy.reshape(-1, frames_per_group).mean(axis=1)
-
-    bands, split = _as_bands(amplitudes, split, single_band_ndim=3)
-    return _normalize_bands((mid_side_energy(band) for band in bands), split, power)
 
 
 def get_mb_crest_factor(amplitudes, power=1.0, *, split=None):

@@ -3,3 +3,5 @@
 /01_ppc_features/output/features.pkl
 /02_ppc_classification/input/features.pkl
 /02_ppc_classification/output/classification.pkl
+/03_ppc_distance/input/features.pkl
+/03_ppc_distance/output/distance.pkl

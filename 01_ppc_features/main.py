@@ -13,6 +13,7 @@ STAGE = Path(__file__).resolve().parent
 INPUT = STAGE / "input/train"
 OUTPUT = STAGE / "output/features.pkl"
 CLASSIFICATION_INPUT = STAGE.parent / "02_ppc_classification/input/features.pkl"
+DISTANCE_INPUT = STAGE.parent / "03_ppc_distance/input/features.pkl"
 
 
 def to_audio_dataframe(dataset):
@@ -70,14 +71,15 @@ def add_features(rows):
     fft = np.stack(rows["fft"])
     hz = np.fft.rfftfreq(raw.shape[1], 1 / rows["sample_rate"].iat[0])
     bands = f.get_multibands(fft, 0.25)
+    threshold = 0.025 * fft.max(axis=1, keepdims=True)
     scores = dict(
-        nonzero_count=f.get_abs_amp_nonzero_count(bands),
+        nonzero_count=f.get_abs_amp_nonzero_count(bands, threshold=threshold),
         avg_frequency=f.get_abs_amp_avg_frequency(bands, hz),
         amp_std=f.get_abs_amp_std(bands),
-        entropy=f.get_mb_entropy(bands),
+        peak=f.get_abs_amp_max(bands),
     )
     return rows.assign(
-        peak=f.get_abs_amp_max(abs(raw)), zcr=f.get_mb_zcr(raw),
+        entropy=f.get_mb_entropy(fft), zcr=f.get_mb_zcr(raw),
         crest_factor=f.get_mb_crest_factor(raw), centroid=f.get_mb_s_centroid(fft, hz),
         flux=f.get_mb_s_flux(fft), onset=f.get_mb_onset(fft),
         **{f"{name}_{i}": values for name, bands in scores.items()
@@ -98,9 +100,10 @@ def preprocess(dataset):
 def main():
     features = preprocess(load_from_disk(str(INPUT)))
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    CLASSIFICATION_INPUT.parent.mkdir(parents=True, exist_ok=True)
     features.to_pickle(OUTPUT)
-    copyfile(OUTPUT, CLASSIFICATION_INPUT)
+    for path in (CLASSIFICATION_INPUT, DISTANCE_INPUT):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        copyfile(OUTPUT, path)
 
 
 if __name__ == "__main__":
