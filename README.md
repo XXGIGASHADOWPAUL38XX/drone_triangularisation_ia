@@ -15,6 +15,7 @@ sans casser la méthodologie.
 02_ppc_classification/ détecteur (CNN gelé, baselines)  -> output/<run>/ (modèle + métriques)
 03_ppc_distance/      distance (MLP gelé, baselines)  -> output/<run>/ (modèle + métriques)
 04_compare/            tableau de tous les runs         -> output/comparatif.csv
+05_export_release/     fige 2 runs -> bundle de release  -> output/<release>/ (contrat edth.model-release.v1)
 ml.py                  bibliothèque partagée de 02 et 03 (modèles, métriques, expérience)
 run_server.sh          tout enchaîne sur la machine RTX
 tests/                 parité 24 kHz, fuite de groupes, smoke des modèles
@@ -73,6 +74,9 @@ python 03_ppc_distance/main.py                    # MLP gelé -> output/mlp-24k/
 python 03_ppc_distance/main.py --model constant && python 03_ppc_distance/main.py --model ridge
 
 python 04_compare/main.py
+
+# figer les runs choisis en une release (contrat d'intégration ML V1, doc Outline B2)
+python 05_export_release/main.py --push     # bundle autovalidé + push vers HF_MODELS_REPO
 ```
 
 Sur la machine RTX : `bash run_server.sh` (deux modèles gelés + les trois
