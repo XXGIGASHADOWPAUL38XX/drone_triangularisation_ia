@@ -22,6 +22,7 @@ from sklearn.preprocessing import StandardScaler
 FROZEN = {("classification", "cnn"): dict(lr=7.7e-3, dropout=0.15),
           ("distance", "mlp"): dict(lr=3e-3, dropout=0.15)}
 BATCH_CNN, BATCH_MLP = 512, 128
+DISTANCE_MIN_M, DISTANCE_MAX_M = 1.0, 7.0   # bornes d'apprentissage et de sortie de la distance
 KEYS = ["sample_id", "device_id", "group_id", "split", "drone_present", "distance_m"]
 
 
@@ -243,7 +244,7 @@ class Mlp:
         p = x.ravel()
         if self.task == "classification":
             return 1 / (1 + np.exp(-np.clip(p, -60, 60)))
-        return np.clip(p, 1.0, 7.0) if bounded else p
+        return np.clip(p, DISTANCE_MIN_M, DISTANCE_MAX_M) if bounded else p
 
     def parameter_count(self):
         return int(sum(w.size + b.size for w, b in self.layers))
@@ -275,7 +276,7 @@ class Linear:
         x = self.scaler.transform(_flat_x(d, self.cols, self.relative))
         if self.task == "classification":
             return self.estimator.predict_proba(x)[:, 1]
-        return np.clip(self.estimator.predict(x), 1.0, 7.0) if bounded else self.estimator.predict(x)
+        return np.clip(self.estimator.predict(x), DISTANCE_MIN_M, DISTANCE_MAX_M) if bounded else self.estimator.predict(x)
 
     def parameter_count(self):
         return int(np.size(self.estimator.coef_) + np.size(self.estimator.intercept_))
@@ -347,7 +348,7 @@ def load(cache):
 def task_frame(d, task):
     """La distance n'apprend que sur les présents à 1-7 m (la prise à 0,1 m reste
     disponible pour la détection, hors plage pour la régression)."""
-    return d[d.drone_present & d.distance_m.between(1, 7)].copy() if task == "distance" else d.copy()
+    return d[d.drone_present & d.distance_m.between(DISTANCE_MIN_M, DISTANCE_MAX_M)].copy() if task == "distance" else d.copy()
 
 
 def metrics(d, task):

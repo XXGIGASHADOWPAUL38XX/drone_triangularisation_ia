@@ -1,21 +1,24 @@
 """Étape 5 : figer deux runs en un bundle de release conforme au contrat d'intégration.
 
-  python main.py                # r1 : les deux runs par défaut -> output/<release>/
+  python main.py                # les deux runs par défaut -> output/<release>/
   python main.py --push         # puis push vers HF_MODELS_REPO (clé du .env)
   python main.py --push-only --release <id>   # pousser un bundle déjà exporté
 
-Entrée  deux dossiers de run (02, 03), le cache parquet + son manifeste de
+Entrée  deux dossiers de run (02, 03), leurs caches parquet + manifestes de
         l'étape 01, le corpus des WAV maîtres
 Sortie  output/<release-id>/ : manifest.json, frozen/, detection/, distance/,
         parity/fixture.json — autovalidé : chaque cas de parité est rejoué
         (flux par blocs de 50 ms, features locales, prédictions) et doit être
         identique aux valeurs attendues, sinon refus.
-Contrat edth.model-release.v2 : la fenêtre (durée, pas), la géométrie des
-bandes et la recette de recalcul des features sont lues dans le manifeste de
-l'étape 01 — plus rien n'est codé en dur ici. Features LOCALES de fenêtre
-uniquement : les descripteurs normalisés par prise ne sont pas rejouables en
-temps réel et sont refusés. Le contenu de output/ n'est pas versionné : le
-canal de diffusion est le repo HF privé, l'application pinne une révision.
+Contrat edth.model-release.v2 : la fenêtre, la géométrie des bandes et la
+recette de recalcul des features sont lues dans les manifestes de l'étape 01 —
+plus rien n'est codé en dur ici. Les deux tâches peuvent venir de caches de
+PAS différents (50 ms détection, 20 ms distance) : même fenêtre, mêmes
+features et même corpus exigés, seuls les pas peuvent différer ; les bornes
+de distance viennent de ml.py. Features LOCALES de fenêtre uniquement : les
+descripteurs normalisés par prise ne sont pas rejouables en temps réel et
+sont refusés. Le contenu de output/ n'est pas versionné : le canal de
+diffusion est le repo HF privé, l'application pinne une révision.
 """
 import argparse
 import base64
@@ -37,6 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))                      # ml.py
 sys.path.insert(0, str(ROOT / "01_ppc_features"))  # dsp.py : registre des features
 import dsp
+import ml
 
 STAGE = Path(__file__).resolve().parent
 INPUT02, INPUT03 = ROOT / "02_ppc_classification", ROOT / "03_ppc_distance"
@@ -44,7 +48,8 @@ CONTRACT = "edth.model-release.v2"
 THRESHOLD = 0.5
 CHUNK_48K = 2400  # 50 ms à 48 kHz : le rejeu simule le flux live par blocs
 RUN_FILES = ("model.joblib", "config.json", "metrics.json")
-DEFAULT_RUN = "mlp-48k-bands200-avg4-w100-s20"  # nom que 02/03 donnent au cache par défaut
+DETECTION_RUN = "mlp-48k-bands200-avg4-w100-s50"   # cache classification de l'étape 01 (pas 50 ms)
+DISTANCE_RUN = "mlp-48k-bands200-avg4-w100-s20"    # cache distance (pas 20 ms)
 FROZEN_SOURCES = {"dsp.py": ROOT / "01_ppc_features" / "dsp.py",
                   "features.py": ROOT / "01_ppc_features" / "features.py",
                   "ml.py": ROOT / "ml.py"}
@@ -136,9 +141,9 @@ def _select_cases(d):
     """Déterministe, split validation uniquement : 1 prise négative + distances extrêmes."""
     valid = d[d.split == "validation"]
     neg = valid[~valid.drone_present]
-    pos = valid[valid.drone_present & valid.distance_m.between(1, 5)]
+    pos = valid[valid.drone_present & valid.distance_m.between(ml.DISTANCE_MIN_M, ml.DISTANCE_MAX_M)]
     if neg.empty or pos.empty:
-        raise SystemExit("il faut au moins une prise négative et une positive (1-5 m) en validation")
+        raise SystemExit("il faut au moins une prise négative et une positive (1-7 m) en validation")
     dists = sorted(pos.distance_m.unique())
     picks = [neg.sample_id.min(),
              pos[pos.distance_m == dists[0]].sample_id.min(),
@@ -203,25 +208,36 @@ def _case(row, pcm48, rate, window_ms, recompute, required, det, dis):
 
 
 def build(a):
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env", override=False)  # provenance HF_DATASET/HF_REVISION si présentes
     det_cfg = _load_run(a.detection, "détection")
     dis_cfg = _load_run(a.distance, "distance")
-    if det_cfg["cache"] != dis_cfg["cache"]:
-        raise SystemExit("les deux runs n'ont pas le même cache : bundle incohérent, refuser")
-    cache = Path(a.cache) if a.cache else a.detection.parent.parent / "input" / det_cfg["cache"]
-    if not cache.is_file():
-        raise SystemExit(f"cache introuvable : {cache} (relancer l'étape 01)")
-    mcache = _stage_manifest(cache)
-    rate, window_ms = mcache["rate"], mcache["window_ms"]
+    cache_det = Path(a.cache) if a.cache else a.detection.parent.parent / "input" / det_cfg["cache"]
+    cache_dis = Path(a.cache) if a.cache else a.distance.parent.parent / "input" / dis_cfg["cache"]
+    for label, cache in (("détection", cache_det), ("distance", cache_dis)):
+        if not cache.is_file():
+            raise SystemExit(f"cache {label} introuvable : {cache} (relancer l'étape 01)")
+    m_det, m_dis = _stage_manifest(cache_det), _stage_manifest(cache_dis)
+    # cohérence des deux caches : même fenêtre, mêmes features, même corpus —
+    # seul le pas (stride) a le droit de différer entre les deux tâches
+    for key in ("rate", "window_ms", "fir", "band_levels", "logfft"):
+        if m_det.get(key) != m_dis.get(key):
+            raise SystemExit(f"les caches des deux runs divergent sur {key!r} : bundle incohérent, refuser")
+    if (m_det["source"], m_det["seed"]) != (m_dis["source"], m_dis["seed"]):
+        raise SystemExit("les caches des deux runs ne viennent pas du même corpus : refuser")
+    rate, window_ms = m_det["rate"], m_det["window_ms"]
     _refuse_recording_features(det_cfg, "détection")
     _refuse_recording_features(dis_cfg, "distance")
     if a.release is None:
-        a.release = f"edth.audio.{rate // 1000}k-w{window_ms}.r1"
+        a.release = f"edth.audio.{rate // 1000}k-w{window_ms}.r2"
     fir = dsp.antialias_fir(rate)
     fir_sha = None if fir is None else hashlib.sha256(fir.tobytes()).hexdigest()
     cutoff = None if fir is None else (11000 if rate == 24000 else 7333)
     width = dsp.window_samples(rate, window_ms)
-    frame = pd.read_parquet(cache)
-    recompute = _recompute(mcache, frame.columns)
+    frame = pd.read_parquet(cache_det)  # cas de parité depuis le cache détection
+    recompute = _recompute(m_det, frame.columns)
+    if recompute != _recompute(m_dis, pd.read_parquet(cache_dis).columns):
+        raise SystemExit("les recettes de features des deux caches diffèrent : refuser")
     required = _required_columns(det_cfg, dis_cfg)
     bundle = Path(a.out) / a.release
     if bundle.exists() and not a.force:
@@ -252,29 +268,35 @@ def build(a):
             model_rate_hz=rate,
             fir=None if fir is None else dict(taps=len(fir), cutoff_hz=cutoff, kaiser_beta=8.6,
                                              coefficients_sha256=fir_sha),
-            window=dict(ms=window_ms, step_ms=mcache["stride_ms"], samples=width,
-                        step_samples=mcache["stride_samples"]),
+            window=dict(ms=window_ms, samples=width),
             qc=dict(zero_run_ms=dsp.DROPOUT * 1000 // dsp.MASTER,
                     guard_ms=dsp.GUARD * 1000 // dsp.MASTER, start_guard_ms=500)),
         features=dict(
-            cache=det_cfg["cache"],
+            caches=dict(detection=det_cfg["cache"], distance=dis_cfg["cache"]),
             fft=dsp.FFT, hop=dsp.HOP, analysis_window="periodic-hann",
             scale="dBFS absolus, plancher -120 dB",
-            band_levels=mcache.get("band_levels"),
-            logfft=mcache.get("logfft"),
+            band_levels=m_det.get("band_levels"),
+            logfft=m_det.get("logfft"),
             local_only=True,
             recompute=recompute,
             note="features locales de fenêtre ; descripteurs normalisés par prise refusés"),
         detection=dict(file="detection/model.joblib", model=det_cfg["model"],
                        input=_input_desc(det_cfg), columns=det_cfg.get("columns"),
-                       threshold=THRESHOLD, rule="single_window"),
+                       threshold=THRESHOLD, rule="single_window",
+                       step=dict(ms=m_det["stride_ms"], samples=m_det["stride_samples"])),
         distance=dict(file="distance/model.joblib", model=dis_cfg["model"],
                       input=_input_desc(dis_cfg), columns=dis_cfg.get("columns"),
-                      bounds_m=[1.0, 5.0], gate="présence établie par detection"),
-        training=dict(cache=det_cfg["cache"], seed=143,
-                      metrics=["detection/metrics.json", "distance/metrics.json"],
-                      validation=dict(detection=det_cfg.get("validation"),
-                                      distance=dis_cfg.get("validation"))),
+                      bounds_m=[ml.DISTANCE_MIN_M, ml.DISTANCE_MAX_M],
+                      gate="présence établie par detection",
+                      step=dict(ms=m_dis["stride_ms"], samples=m_dis["stride_samples"])),
+        training=dict(
+            corpus=dict(source=m_det["source"], seed=m_det["seed"],
+                        capture_contracts=m_det.get("capture_contracts"),
+                        dataset_repo=os.getenv("HF_DATASET"),
+                        dataset_revision=os.getenv("HF_REVISION")),
+            metrics=["detection/metrics.json", "distance/metrics.json"],
+            validation=dict(detection=det_cfg.get("validation"),
+                            distance=dis_cfg.get("validation"))),
     )
     (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2, allow_nan=False) + "\n")
     det = joblib.load(tmp / "detection" / "model.joblib")
@@ -332,14 +354,14 @@ def push(a):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--detection", type=Path, default=INPUT02 / "output" / DEFAULT_RUN)
-    p.add_argument("--distance", type=Path, default=INPUT03 / "output" / DEFAULT_RUN)
+    p.add_argument("--detection", type=Path, default=INPUT02 / "output" / DETECTION_RUN)
+    p.add_argument("--distance", type=Path, default=INPUT03 / "output" / DISTANCE_RUN)
     p.add_argument("--cache", type=Path, default=None,
-                   help="parquet de l'étape 01 (défaut : input du run détection)")
+                   help="forcer le cache des deux runs (défaut : l'input de chaque run)")
     p.add_argument("--data", type=Path, default=ROOT / "01_ppc_features" / "input" / "data",
                    help="corpus des WAV maîtres, samples/ ou AudioFolder (extraits de parité)")
     p.add_argument("--out", type=Path, default=STAGE / "output")
-    p.add_argument("--release", default=None, help="défaut : edth.audio.<taux>k-w<fenêtre_ms>.r1")
+    p.add_argument("--release", default=None, help="défaut : edth.audio.<taux>k-w<fenêtre_ms>.r2")
     p.add_argument("--force", action="store_true", help="écraser un bundle existant")
     p.add_argument("--push", action="store_true", help="pousser le bundle vers HF_MODELS_REPO après l'export")
     p.add_argument("--push-only", action="store_true", help="pousser un bundle déjà exporté")

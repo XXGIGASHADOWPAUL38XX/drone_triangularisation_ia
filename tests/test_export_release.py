@@ -28,7 +28,8 @@ sys.path.insert(0, str(ROOT / "01_ppc_features"))  # dsp.py
 import dsp
 import ml
 
-CACHE_NAME = "windows-48000-bands200-avg4-w100-s20.parquet"
+CACHE_DET = "windows-48000-bands200-avg4-w100-s50.parquet"   # cache classification de l'étape 01
+CACHE_DIS = "windows-48000-bands200-avg4-w100-s20.parquet"   # cache distance
 FEATURES = "band_levels_avg4"
 
 
@@ -83,10 +84,12 @@ def bundle(request, tmp_path_factory):
     shutil.copytree(ROOT / "01_ppc_features", stage, ignore=shutil.ignore_patterns("data", "output"))
     (stage / "input" / "splits.json").unlink(missing_ok=True)  # partitions fraîches pour ce corpus
     subprocess.run([sys.executable, str(stage / "main.py"), "--data", str(corpus)], check=True, cwd=stage)
-    cache = stage / "output" / CACHE_NAME
-    assert cache.is_file(), "l'étape 01 devait écrire le cache par défaut 48 kHz w100-s20"
+    cache_det = stage / "output" / CACHE_DET
+    cache_dis = stage / "output" / CACHE_DIS
+    assert cache_det.is_file(), "l'étape 01 devait écrire le cache classification w100-s50"
+    assert cache_dis.is_file(), "l'étape 01 devait écrire le cache distance w100-s20"
     runs = tmp_path_factory.mktemp("runs")
-    for task in ("classification", "distance"):
+    for task, cache in (("classification", cache_det), ("distance", cache_dis)):
         # même convention que les étapes réelles : <étape>/input/<cache + manifeste>, <étape>/output/<run>
         (runs / task / "input").mkdir(parents=True)
         shutil.copyfile(cache, runs / task / "input" / cache.name)
@@ -113,16 +116,18 @@ def test_bundle_complet_et_manifeste_conforme(bundle):
     assert m["input"]["transport"] == {"rate_hz": 48000, "format": "pcm_s16le", "channels": 1}
     assert m["input"]["model_rate_hz"] == 48000
     assert m["input"]["fir"] is None  # 48 kHz natif : aucun filtre
-    assert m["input"]["window"] == {"ms": 100, "step_ms": 20, "samples": 4800, "step_samples": 960}
+    assert m["input"]["window"] == {"ms": 100, "samples": 4800}
+    assert m["detection"]["step"] == {"ms": 50, "samples": 2400}
+    assert m["distance"]["step"] == {"ms": 20, "samples": 960}
     assert m["input"]["qc"] == {"zero_run_ms": 40, "guard_ms": 500, "start_guard_ms": 500}
-    assert m["features"]["cache"] == CACHE_NAME
+    assert m["features"]["caches"] == {"detection": CACHE_DET, "distance": CACHE_DIS}
     assert m["features"]["band_levels"]["count"] == 50
     assert m["features"]["local_only"] is True
     assert m["features"]["recompute"] == {"band_level_group": "band_levels_avg4", "include_rms": False}
     assert m["detection"]["threshold"] == 0.5 and m["detection"]["rule"] == "single_window"
     assert m["detection"]["columns"] == dsp.BAND_LEVEL_GROUPS["band_levels_avg4"]
-    assert m["distance"]["bounds_m"] == [1.0, 5.0]
-    assert m["training"]["seed"] == 143
+    assert m["distance"]["bounds_m"] == [1.0, 7.0]
+    assert m["training"]["corpus"]["seed"] == 143
     for sub in ("detection", "distance"):
         for name in ("model.joblib", "config.json", "metrics.json"):
             assert (bundle / sub / name).is_file(), f"{sub}/{name}"
