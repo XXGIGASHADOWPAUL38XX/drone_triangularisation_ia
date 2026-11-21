@@ -1,4 +1,4 @@
-"""Tune the grouped-band MLP on a fixed feature cache for each task."""
+"""Tune the MLP on a fixed feature cache for each task."""
 
 import argparse
 import json
@@ -38,7 +38,7 @@ def main():
     torch.set_num_threads(args.threads)
 
     stage, epochs, patience = SETTINGS[args.task]
-    cache = args.input or default_window_cache(ROOT / stage / "input")
+    cache = args.input or default_window_cache(ROOT / stage / "input", classification=args.task == "classification")
     out = ROOT / "04_compare" / "output" / args.name / args.task
     out.mkdir(parents=True, exist_ok=False)
     frame = ml.task_frame(ml.load(cache), args.task)

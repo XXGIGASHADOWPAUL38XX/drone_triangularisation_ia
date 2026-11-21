@@ -11,7 +11,7 @@ sans casser la méthodologie.
 
 ```
 00_download_dataset/   corpus (local ou HF privé)      -> output/data/ (samples/ ou data/)
-01_ppc_features/       fenêtres + 50 features + splits  -> output/windows-48000-bands200-avg4-w100-s20.parquet
+01_ppc_features/       fenêtres + features + splits    -> deux caches parquet pour 02 et 03
 02_ppc_classification/ détecteur (MLP, baselines)        -> output/<run>/ (modèle + métriques)
 03_ppc_distance/      distance (MLP gelé, baselines)  -> output/<run>/ (modèle + métriques)
 04_compare/            tableau de tous les runs         -> output/comparatif.csv
@@ -28,7 +28,7 @@ le contenu de `input/` et `output/` n'est pas versionné (ce sont des données).
 WAV maîtres (mono PCM16 48 kHz)
    │  00  (corpus local ou HF privé)
    ▼ 01_ppc_features/input/data ──> 01 ──> parquet de features + splits.json
-   │        (48 kHz natif, contrôle qualité, fenêtres 100 ms / pas 20 ms)
+   │        (48 kHz natif, contrôle qualité, fenêtres 100 ms / pas 50 ms pour 02 et 20 ms pour 03)
    ▼ copié automatiquement vers 02/input et 03/input
 02 / 03 : entraînement unique par groupes ──> validation ──> holdout
    ▼
@@ -43,7 +43,7 @@ output/<run>/ : model.joblib, metrics.json, config.json, curves.json, courbes
 | Tâche | Modèle | Entrée actuelle | Dev historique | Holdout historique |
 |---|---|---|---|---|
 | Détection | **MLP**, 16 unités cachées | 50 niveaux de bandes | 97,5 % balanced acc. (CNN) | 96,2 % (CNN) |
-| Distance | **MLP**, 16 unités cachées, sortie [1, 5] m | Les mêmes 50 niveaux de bandes | MAE 0,43 m | 0,46 m |
+| Distance | **MLP**, 16 unités cachées, sortie [1, 5] m | 50 niveaux de bandes | MAE 0,43 m | 0,46 m |
 
 Les scores historiques correspondent aux anciennes entrées. Régénérer les parquets à l'étape 01 et réentraîner les modèles pour évaluer les entrées FFT.
 
@@ -106,7 +106,9 @@ Le fichier est **versionné** (`01_ppc_features/input/splits.json`) : une machin
 fraîche le récupère par `git pull`, et l'étape 01 doit afficher
 « partitions réutilisées » — sinon les résultats ne sont plus comparables.
 Les anciens splits gardent leur holdout et réutilisent le pli 0 comme validation.
-Le pipeline et Optuna utilisent par défaut 48 kHz, une fenêtre de 100 ms et un pas de 20 ms.
+Le pipeline et Optuna utilisent par défaut 48 kHz et une fenêtre de 100 ms.
+La classification utilise un pas de 50 ms (`windows-48000-bands200-avg4-w100-s50.parquet`).
+La distance utilise un pas de 20 ms (`windows-48000-bands200-avg4-w100-s20.parquet`).
 Les options `--window-ms` et `--stride-ms` règlent la durée et le pas en millisecondes.
 Le pas accepte des valeurs fractionnaires, par exemple `--stride-ms 62.5`.
 La fenêtre doit contenir au moins les 2 048 échantillons d'une trame FFT.
@@ -116,7 +118,7 @@ Pour conserver plusieurs caches à un même taux, donner un suffixe avec
 ```sh
 python 01_ppc_features/main.py --rate 16000 --window-ms 250 --stride-ms 125
 # puis, pour tester ce taux (depuis la racine) :
-python 02_ppc_classification/main.py --input 02_ppc_classification/input/windows-16000-bands200-avg4.parquet --name mlp-16k
+python 02_ppc_classification/main.py --input 02_ppc_classification/input/windows-16000-bands200-avg4.parquet --features band_levels_avg4 --name mlp-16k
 python 03_ppc_distance/main.py      --input 03_ppc_distance/input/windows-16000-bands200-avg4.parquet --name mlp-16k
 python 04_compare/main.py
 ```
@@ -131,7 +133,7 @@ sur la détection et l'estimation de distance.
 | `band_levels_avg4` | 50 niveaux de bandes en dBFS | le spectre regroupé |
 | `rms` | seulement le niveau global | le niveau absolu, sans spectre |
 | `handcrafted` | six descripteurs de la fenêtre entière | la forme d'onde et le spectre |
-| *(vide)* | 50 niveaux de bandes | le groupe par défaut `band_levels_avg4` |
+| Sans `--features` | 50 niveaux de bandes | le groupe par défaut `band_levels_avg4` |
 
 Les descripteurs sont normalisés par prise. L'entropie, le centroïde, le flux
 et l'onset utilisent le spectre entier. Le taux de

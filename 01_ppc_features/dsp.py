@@ -13,6 +13,7 @@ from features import (BAND_DESCRIPTOR_NAMES, HANDCRAFTED_COLS, band_descriptor_f
 MASTER = 48000
 RATES = (16000, 24000, 48000)
 WINDOW_MS, STRIDE_MS = 100, 20
+CLASSIFICATION_STRIDE_MS = 50
 DEFAULT_CACHE_TAG = f"w{WINDOW_MS}-s{STRIDE_MS}"
 DROPOUT = 1920   # 40 ms de zéros exacts à 48 kHz
 GUARD = 24000    # 500 ms de garde à 48 kHz
@@ -43,9 +44,10 @@ FEATURE_SETS = {"fft": FFT_COLS, "rms": ["rms_db"], "handcrafted": HANDCRAFTED_C
 DEFAULT_FEATURES = DEFAULT_BAND_GROUP
 
 
-def default_window_cache(directory, *, full_spectrum=False):
+def default_window_cache(directory, *, full_spectrum=False, classification=False):
     suffix = "" if full_spectrum else "-bands200-avg4"
-    preferred = directory / f"windows-{MASTER}{suffix}-{DEFAULT_CACHE_TAG}.parquet"
+    tag = f"w{WINDOW_MS}-s{CLASSIFICATION_STRIDE_MS}" if classification else DEFAULT_CACHE_TAG
+    preferred = directory / f"windows-{MASTER}{suffix}-{tag}.parquet"
     if full_spectrum and not preferred.is_file():
         for rate in (24000, 16000, 48000):
             candidate = directory / f"windows-{rate}.parquet"

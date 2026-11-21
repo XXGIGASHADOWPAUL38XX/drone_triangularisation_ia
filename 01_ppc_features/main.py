@@ -3,8 +3,8 @@
   python main.py
 
 Entrée  input/data/samples/           (posée par l'étape 00)
-Sortie  output/windows-48000-bands200-avg4-w100-s20.parquet par défaut,
-        un manifeste JSON et les partitions groupées.
+Sortie  deux caches de 50 niveaux de bandes avec manifestes et partitions.
+        Pas de 20 ms pour la distance et de 50 ms pour la classification.
         output/splits.json            : partitions (groupées) — réutilisé tel
         quel s'il est présent dans input/, donc IDENTIQUE pour tous les taux.
 La sortie est copiée vers l'entrée des étapes 02 et 03.
@@ -21,9 +21,10 @@ from shutil import copyfile
 import numpy as np
 import pandas as pd
 
-from dsp import (BAND_DESCRIPTOR_GROUP, BAND_LEVEL_LAYOUTS, DEFAULT_BAND_GROUP, DEFAULT_CACHE_TAG,
+from dsp import (BAND_DESCRIPTOR_GROUP, BAND_LEVEL_LAYOUTS, CLASSIFICATION_STRIDE_MS,
+                 DEFAULT_BAND_GROUP, DEFAULT_CACHE_TAG,
                  FFT, FLAT_COLS, HOP, LOGFFT, MASTER, N_BINS, RATES, STRIDE_MS, WINDOW_MS, antialias_fir, iter_windows,
-                 n_frames, read_wav48, recording_features, resolve_features, stride_samples)
+                 default_window_cache, n_frames, read_wav48, recording_features, resolve_features, stride_samples)
 from features import BAND_DESCRIPTOR_NAMES, HANDCRAFTED_COLS
 
 STAGE = Path(__file__).resolve().parent
@@ -98,9 +99,11 @@ def assign_splits(rows, seed=SEED):
 
 
 def build_rows(root, rate, *, window_ms=WINDOW_MS, stride_ms=STRIDE_MS, include_b48=False,
-               band_level_group=None, include_descriptors=False, include_band_descriptors=False):
+               band_level_group=None, include_descriptors=False, include_band_descriptors=False,
+               export_classification=False):
     """Valide les métadonnées, lit les WAV stricts, calcule les fenêtres."""
     rows, frames, seen = [], [], set()
+    classification_frames = []
     for m, path in entries(root):
         sid = m["sample_id"]
         if not sid or sid in seen:
@@ -132,10 +135,17 @@ def build_rows(root, rate, *, window_ms=WINDOW_MS, stride_ms=STRIDE_MS, include_
             frames.append(pd.DataFrame(wins).assign(sample_id=sid))
         else:
             r["reason"] = "aucune fenêtre valide"
+        if export_classification:
+            class_windows = iter_windows(pcm, rate, window_ms=window_ms,
+                                         stride_ms=CLASSIFICATION_STRIDE_MS)
+            class_features = recording_features(class_windows, rate, window_ms=window_ms,
+                                                band_level_group=DEFAULT_BAND_GROUP)
+            if class_features:
+                classification_frames.append(pd.DataFrame(class_features).assign(sample_id=sid))
     if not frames:
         raise ValueError("aucune fenêtre valide dans tout le corpus : vérifier input/data")
     events(rows)
-    return rows, frames
+    return rows, frames, classification_frames
 
 
 def main():
@@ -172,15 +182,23 @@ def main():
         p.error("--with-descriptors nécessite un mode --band-levels")
     if a.with_band_descriptors and a.band_level_group != DEFAULT_BAND_GROUP:
         p.error("--with-band-descriptors nécessite le mode --band-levels-avg4")
+    export_classification = (
+        (a.rate, a.window_ms, a.stride_ms) == (MASTER, WINDOW_MS, STRIDE_MS)
+        and a.band_level_group == DEFAULT_BAND_GROUP
+        and not (a.cache_tag or a.with_descriptors or a.with_band_descriptors)
+    )
     try:
         frame_count = n_frames(a.rate, a.window_ms)
         step_samples = stride_samples(a.rate, a.stride_ms)
     except ValueError as exc:
         p.error(str(exc))
-    rows, frames = build_rows(a.data, a.rate, window_ms=a.window_ms, stride_ms=a.stride_ms,
-                              include_b48=a.include_b48, band_level_group=a.band_level_group,
-                              include_descriptors=a.with_descriptors,
-                              include_band_descriptors=a.with_band_descriptors)
+    rows, frames, classification_frames = build_rows(
+        a.data, a.rate, window_ms=a.window_ms, stride_ms=a.stride_ms, include_b48=a.include_b48,
+        band_level_group=a.band_level_group, include_descriptors=a.with_descriptors,
+        include_band_descriptors=a.with_band_descriptors, export_classification=export_classification,
+    )
+    if export_classification and not classification_frames:
+        raise ValueError("aucune fenêtre valide pour la classification")
     splits_path = INPUT / "splits.json"
     if splits_path.is_file():
         table = json.loads(splits_path.read_text())
@@ -223,8 +241,9 @@ def main():
             feature_cols += resolve_features("b48")
         feature_cols.append(LOGFFT)
         tag = f"{a.rate}-b48" if a.include_b48 else str(a.rate)
+    id_cols = [*keys, "start_sample"]
     windows = (pd.concat(frames, ignore_index=True).merge(meta, on="sample_id", validate="many_to_one")
-               .sort_values(["sample_id", "start_sample"])[keys + ["start_sample", *feature_cols]])
+               .sort_values(["sample_id", "start_sample"]))
     OUTPUT.mkdir(parents=True, exist_ok=True)
     cache_tag = a.cache_tag
     if not cache_tag and (a.window_ms, a.stride_ms) == (WINDOW_MS, STRIDE_MS):
@@ -232,7 +251,7 @@ def main():
     if cache_tag:
         tag += "-" + cache_tag
     parquet = OUTPUT / f"windows-{tag}.parquet"
-    windows.to_parquet(parquet, index=False)
+    windows[id_cols + feature_cols].to_parquet(parquet, index=False)
     (OUTPUT / "splits.json").write_text(json.dumps(table, indent=2) + "\n")
     fir = antialias_fir(a.rate)
     manifest = dict(rate=a.rate, window_ms=a.window_ms, stride_ms=a.stride_ms,
@@ -254,13 +273,37 @@ def main():
                         handcrafted=HANDCRAFTED_COLS, include_b48=a.include_b48)
     manifest_path = OUTPUT / f"manifest-{tag}.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    if export_classification:
+        classification_path = default_window_cache(OUTPUT, classification=True)
+        classification_windows = (pd.concat(classification_frames, ignore_index=True)
+                                  .merge(meta, on="sample_id", validate="many_to_one")
+                                  .sort_values(["sample_id", "start_sample"]))
+        classification_windows[id_cols + band_cols].to_parquet(classification_path, index=False)
+        classification_counts = classification_windows["sample_id"].value_counts()
+        classification_takes = []
+        for take in manifest["takes"]:
+            count = int(classification_counts.get(take["sample_id"], 0))
+            classification_take = dict(take, valid_windows=count)
+            if count:
+                classification_take.pop("reason", None)
+            else:
+                classification_take.setdefault("reason", "aucune fenêtre valide")
+            classification_takes.append(classification_take)
+        classification_manifest = dict(
+            manifest, stride_ms=CLASSIFICATION_STRIDE_MS,
+            stride_samples=stride_samples(a.rate, CLASSIFICATION_STRIDE_MS), takes=classification_takes,
+        )
+        classification_info = (OUTPUT / classification_path.name.replace("windows-", "manifest-")).with_suffix(".json")
+        classification_info.write_text(json.dumps(classification_manifest, indent=2) + "\n")
     print(windows.groupby(["split", "drone_present"]).agg(fenetres=("sample_id", "size"),
                                                          prises=("sample_id", "nunique")))
     for stage in ("02_ppc_classification", "03_ppc_distance"):
         (STAGE.parent / stage / "input").mkdir(parents=True, exist_ok=True)
-        for name in (parquet.name, manifest_path.name, "splits.json"):
-            if (OUTPUT / name).is_file():
-                copyfile(OUTPUT / name, STAGE.parent / stage / "input" / name)
+        paths = [parquet, manifest_path, OUTPUT / "splits.json"]
+        if export_classification and stage == "02_ppc_classification":
+            paths.extend((classification_path, classification_info))
+        for path in paths:
+            copyfile(path, STAGE.parent / stage / "input" / path.name)
     splits_path.parent.mkdir(parents=True, exist_ok=True)
     copyfile(OUTPUT / "splits.json", splits_path)  # le prochain taux reprendra ces partitions
     print(f"sortie copiée vers 02/input et 03/input ; parquet : {parquet}")

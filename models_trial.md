@@ -93,3 +93,22 @@ The study ranked 30 trials by holdout MAE at seed 42. It used the same 50 groupe
 | 18, best new configuration | 0.004083 | 0.10 | 16 | 128 | 0.004354 | 0.440134 m |
 
 [All 30 trials](04_compare/output/optuna-distance-holdout-w100-s20/distance/trials.csv)
+
+## Seven-feature classification at 100 / 20 ms
+
+Both MLPs used the same 125,007 windows and recording-level splits at native 48 kHz. The classifier used RMS, entropy, zero-crossing rate, crest factor, spectral centroid, spectral flux, and onset. The distance rerun reproduced the previous scores.
+
+| Task | Features | Validation | Holdout | Run |
+|---|---|---:|---:|---|
+| Classification, balanced accuracy | RMS and six descriptors | 85.28% | 92.44% | [Metrics](02_ppc_classification/output/mlp-48k-descriptors-w100-s20/metrics.json) |
+| Distance, MAE | 50 grouped dBFS levels | 0.5893 m | 0.4348 m | [Metrics](03_ppc_distance/output/mlp-48k-bands200-avg4-w100-s20-rerun/metrics.json) |
+
+### Seven-feature classification at 100 / 50 ms
+
+At native 48 kHz and the same recording-level splits, the classifier used 50,010 windows and the same RMS and six descriptors.
+
+| Features | Validation balanced accuracy | Holdout balanced accuracy | Run |
+|---|---:|---:|---|
+| RMS and six descriptors | 85.16% | 93.48% | [Metrics](02_ppc_classification/output/mlp-48k-descriptors-w100-s50/metrics.json) |
+
+The classification default returned to the 50 grouped dBFS band levels at 100 / 50 ms. The rerun reproduced **95.82% validation** and **98.95% holdout balanced accuracy** exactly. [Rerun metrics](02_ppc_classification/output/mlp-48k-bands200-avg4-w100-s50-rerun/metrics.json)

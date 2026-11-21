@@ -2,9 +2,9 @@
 
   python main.py                                        # MLP sur les 50 niveaux de bandes
   python main.py --model logistic --name logit
-  python main.py --input input/windows-48000-bands200-avg4-descriptors-w100-s20.parquet --features handcrafted
+  python main.py --input input/windows-48000-descriptors-w100-s50.parquet --features rms,handcrafted
 
-Entrée  input/windows-48000-bands200-avg4-w100-s20.parquet par défaut
+Entrée  input/windows-48000-bands200-avg4-w100-s50.parquet par défaut
 Sortie  output/<nom>/ : model.joblib, metrics.json (validation + holdout), config.json,
         curves.json, learning-curves.png
 Entraînement unique avec arrêt anticipé sur la validation et évaluation
@@ -49,7 +49,7 @@ def main():
     p.add_argument("--seed", type=int, default=42)
     a = p.parse_args()
     if a.input is None:
-        a.input = default_window_cache(INPUT, full_spectrum=a.model == "cnn")
+        a.input = default_window_cache(INPUT, full_spectrum=a.model == "cnn", classification=a.model != "cnn")
     if not a.input.is_file():
         raise SystemExit(f"cache introuvable : {a.input} (relancer l'étape 01)")
     m = re.search(r"(\d+)(.*)$", a.input.stem)
